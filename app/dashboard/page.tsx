@@ -73,7 +73,7 @@ export default async function Dashboard() {
             </div>
           ) : (
             <div className="space-y-3">
-              {cliente.empresas.map(emp => (
+              {cliente.empresas.map((emp: { id: string; nombre: string; rut: string; apiToken: string }) => (
                 <div key={emp.id} className="bg-[#112240] rounded-xl p-5 border border-white/10 flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-white">{emp.nombre}</p>
