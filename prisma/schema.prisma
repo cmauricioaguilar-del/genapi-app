@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Cliente {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  nombre        String
+  claveHash     String
+  plan          String    @default("STARTER") // STARTER | PROFESIONAL | BUSINESS | ENTERPRISE
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+
+  empresas  Empresa[]
+
+  @@map("clientes")
+}
+
+model Empresa {
+  id            String    @id @default(cuid())
+  nombre        String
+  rut           String
+  siiRut        String
+  siiClaveEnc   String    // AES-256-GCM cifrado
+  apiToken      String    @unique @default(uuid()) // token que el cliente usa para llamar la API
+  activa        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+
+  clienteId  String
+  cliente    Cliente    @relation(fields: [clienteId], references: [id])
+
+  extracciones  Extraccion[]
+  logsUso       LogUso[]
+
+  @@map("empresas")
+}
+
+model Extraccion {
+  id         String   @id @default(cuid())
+  period     String   // YYYYMM
+  modulo     String   // ventas | compras | f29
+  estado     String   @default("PENDIENTE") // PENDIENTE | PROCESANDO | COMPLETADA | ERROR
+  resultado  Json?    // datos extraídos del SII
+  error      String?
+  creadoEn   DateTime @default(now())
+
+  empresaId  String
+  empresa    Empresa  @relation(fields: [empresaId], references: [id])
+
+  @@map("extracciones")
+}
+
+model LogUso {
+  id        String   @id @default(cuid())
+  endpoint  String   // ventas | compras | f29 | status
+  period    String?
+  ip        String?
+  creadoEn  DateTime @default(now())
+
+  empresaId  String
+  empresa    Empresa  @relation(fields: [empresaId], references: [id])
+
+  @@map("logs_uso")
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  claveHash String
+  creadoEn  DateTime @default(now())
+
+  @@map("admins")
+}
