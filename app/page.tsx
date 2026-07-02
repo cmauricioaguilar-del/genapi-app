@@ -1,5 +1,34 @@
 import Link from "next/link";
 
+const LogoSVG = () => (
+  <svg width="100%" viewBox="0 0 680 320" role="img" aria-label="Logo GENAPI">
+    <title>GENAPI</title>
+    <polygon points="340,52 390,80 390,136 340,164 290,136 290,80" fill="none" stroke="#c9a84c" strokeWidth="2.5"/>
+    <polygon points="340,72 373,91 373,129 340,148 307,129 307,91" fill="#0a1628" stroke="#c9a84c" strokeWidth="1.2"/>
+    <circle cx="340" cy="72" r="4" fill="#c9a84c"/>
+    <circle cx="373" cy="91" r="4" fill="#c9a84c"/>
+    <circle cx="373" cy="129" r="4" fill="#c9a84c"/>
+    <circle cx="340" cy="148" r="4" fill="#c9a84c"/>
+    <circle cx="307" cy="129" r="4" fill="#c9a84c"/>
+    <circle cx="307" cy="91" r="4" fill="#c9a84c"/>
+    <circle cx="340" cy="110" r="8" fill="#c9a84c"/>
+    <circle cx="340" cy="110" r="4" fill="#0a1628"/>
+    <line x1="340" y1="110" x2="340" y2="72" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="340" y1="110" x2="373" y2="91" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="340" y1="110" x2="373" y2="129" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="340" y1="110" x2="340" y2="148" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="340" y1="110" x2="307" y2="129" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="340" y1="110" x2="307" y2="91" stroke="#c9a84c" strokeWidth="1" opacity="0.6"/>
+    <line x1="240" y1="110" x2="286" y2="110" stroke="#c9a84c" strokeWidth="1" opacity="0.35"/>
+    <line x1="394" y1="110" x2="440" y2="110" stroke="#c9a84c" strokeWidth="1" opacity="0.35"/>
+    <circle cx="236" cy="110" r="3" fill="#c9a84c" opacity="0.5"/>
+    <circle cx="444" cy="110" r="3" fill="#c9a84c" opacity="0.5"/>
+    <text x="340" y="212" textAnchor="middle" fontFamily="'Barlow', 'Arial', sans-serif" fontWeight="700" fontSize="52" letterSpacing="10" fill="#c9a84c">GENAPI</text>
+    <line x1="200" y1="228" x2="480" y2="228" stroke="#c9a84c" strokeWidth="0.8" opacity="0.4"/>
+    <text x="340" y="252" textAnchor="middle" fontFamily="'Barlow', 'Arial', sans-serif" fontWeight="400" fontSize="12" letterSpacing="2.5" fill="#8a9ab8">{"API's para Integración de Sistemas"}</text>
+  </svg>
+);
+
 export default function Landing() {
   return (
     <main className="min-h-screen bg-[#0a1628] text-[#cdd6e8] font-sans">
@@ -12,26 +41,36 @@ export default function Landing() {
         </div>
       </nav>
 
-      {/* HERO */}
-      <section className="max-w-4xl mx-auto px-8 pt-24 pb-16 text-center">
-        <div className="inline-block px-3 py-1 mb-6 text-xs font-semibold bg-[#c9a84c]/20 text-[#c9a84c] rounded-full border border-[#c9a84c]/30">
-          API SII Chile · RCV · F29 · Honorarios
-        </div>
-        <h1 className="text-5xl font-bold text-white mb-6 leading-tight">
-          Conecta tu software al SII<br />
-          <span className="text-[#c9a84c]">en minutos, no en semanas</span>
-        </h1>
-        <p className="text-xl text-[#a8b4c8] mb-10 max-w-2xl mx-auto">
-          API REST para extraer ventas, compras y F29 directamente del SII chileno.
-          Sin complicaciones, sin burocracia. Más barato que la competencia.
-        </p>
-        <div className="flex gap-4 justify-center">
-          <Link href="/registro" className="px-8 py-4 bg-[#c9a84c] text-[#0a1628] rounded-lg font-bold text-lg hover:bg-[#e4c97a] transition">
-            Crear cuenta gratis
-          </Link>
-          <a href="#pricing" className="px-8 py-4 border border-white/20 text-white rounded-lg font-semibold text-lg hover:bg-white/5 transition">
-            Ver precios
-          </a>
+      {/* HERO — logo izquierda, texto derecha */}
+      <section className="max-w-6xl mx-auto px-8 pt-16 pb-16">
+        <div className="flex flex-col lg:flex-row items-center gap-12">
+          {/* LOGO GRANDE */}
+          <div className="w-full lg:w-[420px] shrink-0">
+            <LogoSVG />
+          </div>
+
+          {/* TEXTO */}
+          <div className="flex-1">
+            <div className="inline-block px-3 py-1 mb-6 text-xs font-semibold bg-[#c9a84c]/20 text-[#c9a84c] rounded-full border border-[#c9a84c]/30">
+              API SII Chile · RCV · F29 · Honorarios
+            </div>
+            <h1 className="text-4xl lg:text-5xl font-bold text-white mb-6 leading-tight">
+              Conecta tu software al SII<br />
+              <span className="text-[#c9a84c]">en minutos, no en semanas</span>
+            </h1>
+            <p className="text-lg text-[#a8b4c8] mb-10">
+              API REST para extraer ventas, compras y F29 directamente del SII chileno.
+              Sin complicaciones, sin burocracia. Más barato que la competencia.
+            </p>
+            <div className="flex gap-4 flex-wrap">
+              <Link href="/registro" className="px-8 py-4 bg-[#c9a84c] text-[#0a1628] rounded-lg font-bold text-lg hover:bg-[#e4c97a] transition">
+                Crear cuenta gratis
+              </Link>
+              <a href="#pricing" className="px-8 py-4 border border-white/20 text-white rounded-lg font-semibold text-lg hover:bg-white/5 transition">
+                Ver precios
+              </a>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -53,7 +92,7 @@ export default function Landing() {
       </section>
 
       {/* PRICING */}
-      <section id="pricing" className="max-w-5xl mx-auto px-8 pb-24">
+      <section id="pricing" className="max-w-5xl mx-auto px-8 pb-16">
         <h2 className="text-3xl font-bold text-white text-center mb-12">Planes disponibles</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
@@ -81,9 +120,34 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* PARTNER BANNER */}
+      <section className="max-w-5xl mx-auto px-8 pb-20">
+        <div className="bg-[#112240] border border-[#c9a84c]/30 rounded-xl px-8 py-7 flex flex-col sm:flex-row items-center justify-between gap-6">
+          <div>
+            <p className="text-xs font-semibold text-[#c9a84c] uppercase tracking-widest mb-1">Partner oficial</p>
+            <h3 className="text-xl font-bold text-white mb-1">¿Necesitas integración a medida?</h3>
+            <p className="text-[#a8b4c8] text-sm">
+              Nexxus Consulting implementa GENAPI en tu plataforma. Somos especialistas en integración de sistemas empresariales en Chile.
+            </p>
+          </div>
+          <a
+            href="https://www.nexxus-consulting.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 px-7 py-3 bg-[#c9a84c] text-[#0a1628] rounded-lg font-bold text-sm hover:bg-[#e4c97a] transition whitespace-nowrap"
+          >
+            Visitar Nexxus Consulting →
+          </a>
+        </div>
+      </section>
+
       {/* FOOTER */}
       <footer className="border-t border-white/10 px-8 py-6 text-center text-sm text-[#a8b4c8]">
-        © 2026 GENAPI · Nexxus Consulting · <a href="mailto:contacto@genapi.cl" className="hover:text-white">contacto@genapi.cl</a>
+        © 2026 GENAPI ·{" "}
+        <a href="https://www.nexxus-consulting.com" target="_blank" rel="noopener noreferrer" className="text-[#c9a84c] hover:text-[#e4c97a] transition">
+          Nexxus Consulting
+        </a>
+        {" "}· <a href="mailto:contacto@genapi.cl" className="hover:text-white">contacto@genapi.cl</a>
       </footer>
     </main>
   );
