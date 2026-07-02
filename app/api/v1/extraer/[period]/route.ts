@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { autenticarToken, registrarUso } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ period: string }> }) {
   const { period } = await params;
 

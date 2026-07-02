@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { autenticarToken } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 const LIMITES: Record<string, number> = {
   STARTER: 3,
   PROFESIONAL: 10,
