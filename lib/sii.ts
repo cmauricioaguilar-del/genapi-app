@@ -26,24 +26,41 @@ function normalizarRut(rut: string): string {
 }
 
 // Login en SII y obtener cookies de sesión
+// Acumula Set-Cookie de múltiples respuestas en un mapa (última gana)
+function mergeCookies(existing: Map<string, string>, setCookieHeaders: string[]): void {
+  for (const header of setCookieHeaders) {
+    const kv = header.split(";")[0].trim();
+    const eqIdx = kv.indexOf("=");
+    if (eqIdx === -1) continue;
+    const name = kv.slice(0, eqIdx);
+    existing.set(name, kv);
+  }
+}
+
+function cookieMapToHeader(map: Map<string, string>): string {
+  return Array.from(map.values()).join("; ");
+}
+
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  // Paso 1: cargar página de login para obtener cookies F5 (TS*)
-  const loginPageResp = await fetch(
+  const jar = new Map<string, string>();
+  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+
+  // Paso 1: GET página de login para obtener cookies F5 (TS*)
+  const p1 = await fetch(
     "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
     {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-419,es;q=0.9",
       },
+      redirect: "follow",
     }
   );
+  mergeCookies(jar, p1.headers.getSetCookie?.() ?? []);
+  console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
 
-  // Capturar cookies de la página de login
-  const loginPageCookies = loginPageResp.headers.getSetCookie?.() ?? [];
-  const cookieHeader = loginPageCookies.map(c => c.split(";")[0]).join("; ");
-
-  // Paso 2: POST del formulario de login
+  // Paso 2: POST login — redirect:manual para capturar cookies del 302
   const formData = new URLSearchParams({
     rut: rutDigitos,
     dv: dv,
@@ -52,7 +69,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     "411": "",
   });
 
-  const loginResp = await fetch(
+  const p2 = await fetch(
     "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi",
     {
       method: "POST",
@@ -60,46 +77,68 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
         "Content-Type": "application/x-www-form-urlencoded",
         "Referer": "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
         "Origin": "https://zeusr.sii.cl",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-419,es;q=0.9",
-        "Cookie": cookieHeader,
+        "Cookie": cookieMapToHeader(jar),
       },
       body: formData.toString(),
       redirect: "manual",
     }
   );
+  mergeCookies(jar, p2.headers.getSetCookie?.() ?? []);
+  console.log("Login paso2 status:", p2.status, "location:", p2.headers.get("location"), "cookies:", jar.size);
 
-  // Recopilar todas las cookies de la respuesta de login
-  const allSetCookies: string[] = [];
+  // Si es 302, seguir el redirect manualmente para capturar más cookies
+  if (p2.status === 302 || p2.status === 301) {
+    let location = p2.headers.get("location") ?? "";
+    if (location && !location.startsWith("http")) {
+      location = "https://zeusr.sii.cl" + location;
+    }
+    if (location) {
+      const p3 = await fetch(location, {
+        headers: {
+          "User-Agent": UA,
+          "Accept": "text/html,application/xhtml+xml,*/*",
+          "Cookie": cookieMapToHeader(jar),
+        },
+        redirect: "manual",
+      });
+      mergeCookies(jar, p3.headers.getSetCookie?.() ?? []);
+      console.log("Login paso3 status:", p3.status, "cookies:", jar.size);
 
-  // Cookies de la página inicial
-  for (const c of loginPageCookies) {
-    allSetCookies.push(c.split(";")[0]);
-  }
-
-  // Cookies del POST de login
-  const loginCookies = loginResp.headers.getSetCookie?.() ?? [];
-  for (const c of loginCookies) {
-    allSetCookies.push(c.split(";")[0]);
-  }
-
-  const html = await loginResp.text();
-
-  // Verificar si el login falló
-  if (html.includes("no se puede responder") || html.includes("Error") || html.includes("IngresoRutClave")) {
-    console.error("Login SII falló:", html.substring(0, 200));
+      // Puede haber otro redirect
+      if (p3.status === 302 || p3.status === 301) {
+        let loc2 = p3.headers.get("location") ?? "";
+        if (loc2 && !loc2.startsWith("http")) loc2 = "https://zeusr.sii.cl" + loc2;
+        if (loc2) {
+          const p4 = await fetch(loc2, {
+            headers: { "User-Agent": UA, "Accept": "text/html,*/*", "Cookie": cookieMapToHeader(jar) },
+            redirect: "manual",
+          });
+          mergeCookies(jar, p4.headers.getSetCookie?.() ?? []);
+          console.log("Login paso4 status:", p4.status, "cookies:", jar.size);
+        }
+      }
+    }
+  } else {
+    // No hubo redirect — verificar si el body indica error
+    const html = await p2.text();
+    console.error("Login SII sin redirect, html:", html.substring(0, 300));
     return null;
   }
 
-  // Buscar TOKEN en las cookies
-  const tokenMatch = allSetCookies.find(c => c.startsWith("TOKEN=") || c.startsWith("CSESSIONID="));
-  if (!tokenMatch && !allSetCookies.some(c => c.includes("NETSCAPE_LIVEWIRE"))) {
+  // Verificar que tenemos TOKEN o NETSCAPE_LIVEWIRE
+  const hasToken = jar.has("TOKEN") || jar.has("CSESSIONID");
+  const hasLW = jar.has("NETSCAPE_LIVEWIRE.rut") || [...jar.keys()].some(k => k.startsWith("NETSCAPE_LIVEWIRE"));
+  console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "keys=", [...jar.keys()].join(","));
+
+  if (!hasToken && !hasLW) {
     console.error("Login SII: no se obtuvieron cookies de sesión");
     return null;
   }
 
-  return allSetCookies.join("; ");
+  return cookieMapToHeader(jar);
 }
 
 // Llamada directa a la API REST del portal RCV de SII
