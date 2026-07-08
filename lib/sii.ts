@@ -25,19 +25,6 @@ function normalizarRut(rut: string): string {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
 }
 
-function mergeCookies(existing: Map<string, string>, setCookieHeaders: string[]): void {
-  for (const header of setCookieHeaders) {
-    const kv = header.split(";")[0].trim();
-    const eqIdx = kv.indexOf("=");
-    if (eqIdx === -1) continue;
-    const name = kv.slice(0, eqIdx);
-    existing.set(name, kv);
-  }
-}
-
-function cookieMapToHeader(map: Map<string, string>): string {
-  return Array.from(map.values()).join("; ");
-}
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const { chromium } = require("playwright");
 
@@ -88,102 +75,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   } finally {
     await browser.close();
   }
-}
-
-
-  // Extraer campos ocultos del formulario
-  const hiddenFields: Record<string, string> = {};
-  const inputRegex = /<input[^>]+type=["']hidden["'][^>]*>/gi;
-  const nameRegex = /name=["']([^"']+)["']/i;
-  const valueRegex = /value=["']([^"']*)["']/i;
-  let match;
-  while ((match = inputRegex.exec(html1)) !== null) {
-    const nameMatch = nameRegex.exec(match[0]);
-    const valueMatch = valueRegex.exec(match[0]);
-    if (nameMatch) hiddenFields[nameMatch[1]] = valueMatch ? valueMatch[1] : "";
-  }
-  console.log("Campos ocultos encontrados:", Object.keys(hiddenFields).join(","));
-
-  // Paso 2: POST login con todos los campos del formulario
-  const formData = new URLSearchParams({
-    ...hiddenFields,
-    rutcntr: `${rutDigitos}-${dv}`,
-    rut: rutDigitos,
-    dv: dv,
-    clave: clave,
-    referencia: "https://www.sii.cl",
-  });
-
-  const p2 = await fetch(
-    "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
-        "Origin": "https://zeusr.sii.cl",
-        "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-419,es;q=0.9",
-        "Cookie": cookieMapToHeader(jar),
-      },
-      body: formData.toString(),
-      redirect: "manual",
-    }
-  );
-  mergeCookies(jar, p2.headers.getSetCookie?.() ?? []);
-  console.log("Login paso2 status:", p2.status, "location:", p2.headers.get("location"), "cookies:", jar.size);
-
-  if (p2.status === 302 || p2.status === 301) {
-    let location = p2.headers.get("location") ?? "";
-    if (location && !location.startsWith("http")) {
-      location = "https://zeusr.sii.cl" + location;
-    }
-    if (location) {
-      const p3 = await fetch(location, {
-        headers: {
-          "User-Agent": UA,
-          "Accept": "text/html,application/xhtml+xml,*/*",
-          "Cookie": cookieMapToHeader(jar),
-        },
-        redirect: "manual",
-      });
-      mergeCookies(jar, p3.headers.getSetCookie?.() ?? []);
-      console.log("Login paso3 status:", p3.status, "cookies:", jar.size);
-
-      if (p3.status === 302 || p3.status === 301) {
-        let loc2 = p3.headers.get("location") ?? "";
-        if (loc2 && !loc2.startsWith("http")) loc2 = "https://zeusr.sii.cl" + loc2;
-        if (loc2) {
-          const p4 = await fetch(loc2, {
-            headers: { "User-Agent": UA, "Accept": "text/html,*/*", "Cookie": cookieMapToHeader(jar) },
-            redirect: "manual",
-          });
-          mergeCookies(jar, p4.headers.getSetCookie?.() ?? []);
-          console.log("Login paso4 status:", p4.status, "cookies:", jar.size);
-        }
-      }
-    }
-  } else {
-    const html = await p2.text();
-    const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i)
-      ?? html.match(/<b>([\s\S]{0,200})<\/b>/i)
-      ?? html.match(/<p>([\s\S]{0,200})<\/p>/i);
-    const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : html.substring(0, 500);
-    console.error("Login SII error:", errMsg);
-    return null;
-  }
-
-  const hasToken = jar.has("TOKEN") || jar.has("CSESSIONID");
-  const hasLW = jar.has("NETSCAPE_LIVEWIRE.rut") || [...jar.keys()].some(k => k.startsWith("NETSCAPE_LIVEWIRE"));
-  console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "keys=", [...jar.keys()].join(","));
-
-  if (!hasToken && !hasLW) {
-    console.error("Login SII: no se obtuvieron cookies de sesión");
-    return null;
-  }
-
-  return cookieMapToHeader(jar);
 }
 
 async function llamarApiRCV(
