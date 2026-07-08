@@ -10,7 +10,6 @@
     "seed": "ts-node --esm prisma/seed.ts",
     "postinstall": "npx playwright install chromium"
   },
-  },
   "prisma": {
     "seed": "ts-node --esm prisma/seed.ts"
   },
