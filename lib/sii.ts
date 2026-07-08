@@ -61,7 +61,10 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
 
   // Paso 2: POST login — redirect:manual para capturar cookies del 302
+  // El form usa JS para separar rut/dv desde rutcntr, pero el CGI acepta ambos formatos
+  // Enviamos rutcntr (campo visible) + rut + dv (campos hidden que JS llenaría)
   const formData = new URLSearchParams({
+    rutcntr: `${rutDigitos}-${dv}`,
     rut: rutDigitos,
     dv: dv,
     clave: clave,
@@ -122,9 +125,14 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       }
     }
   } else {
-    // No hubo redirect — verificar si el body indica error
+    // No hubo redirect — SII devolvió error
     const html = await p2.text();
-    console.error("Login SII sin redirect, html:", html.substring(0, 300));
+    // Extraer mensaje de error del HTML
+    const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i)
+      ?? html.match(/<b>([\s\S]{0,200})<\/b>/i)
+      ?? html.match(/<p>([\s\S]{0,200})<\/p>/i);
+    const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : html.substring(0, 500);
+    console.error("Login SII error:", errMsg);
     return null;
   }
 
