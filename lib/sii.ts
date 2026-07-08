@@ -25,8 +25,6 @@ function normalizarRut(rut: string): string {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
 }
 
-// Login en SII y obtener cookies de sesión
-// Acumula Set-Cookie de múltiples respuestas en un mapa (última gana)
 function mergeCookies(existing: Map<string, string>, setCookieHeaders: string[]): void {
   for (const header of setCookieHeaders) {
     const kv = header.split(";")[0].trim();
@@ -45,31 +43,46 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   const jar = new Map<string, string>();
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
-  // Paso 1: GET página de login para obtener cookies F5 (TS*)
+  // Paso 1: GET página de login para obtener cookies F5 (TS*) y campos ocultos del form
   const p1 = await fetch(
-    "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
+    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
     {
       headers: {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-419,es;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
     }
   );
   mergeCookies(jar, p1.headers.getSetCookie?.() ?? []);
+  const html1 = await p1.text();
   console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
 
-  // Paso 2: POST login — redirect:manual para capturar cookies del 302
-  // El form usa JS para separar rut/dv desde rutcntr, pero el CGI acepta ambos formatos
-  // Enviamos rutcntr (campo visible) + rut + dv (campos hidden que JS llenaría)
+  // Extraer campos ocultos del formulario
+  const hiddenFields: Record<string, string> = {};
+  const inputRegex = /<input[^>]+type=["']hidden["'][^>]*>/gi;
+  const nameRegex = /name=["']([^"']+)["']/i;
+  const valueRegex = /value=["']([^"']*)["']/i;
+  let match;
+  while ((match = inputRegex.exec(html1)) !== null) {
+    const nameMatch = nameRegex.exec(match[0]);
+    const valueMatch = valueRegex.exec(match[0]);
+    if (nameMatch) hiddenFields[nameMatch[1]] = valueMatch ? valueMatch[1] : "";
+  }
+  console.log("Campos ocultos encontrados:", Object.keys(hiddenFields).join(","));
+
+  // Paso 2: POST login con todos los campos del formulario
   const formData = new URLSearchParams({
+    ...hiddenFields,
     rutcntr: `${rutDigitos}-${dv}`,
     rut: rutDigitos,
     dv: dv,
     clave: clave,
-    referencia: "http://www.sii.cl",
-    "411": "",
+    referencia: "https://www.sii.cl",
   });
 
   const p2 = await fetch(
@@ -92,7 +105,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   mergeCookies(jar, p2.headers.getSetCookie?.() ?? []);
   console.log("Login paso2 status:", p2.status, "location:", p2.headers.get("location"), "cookies:", jar.size);
 
-  // Si es 302, seguir el redirect manualmente para capturar más cookies
   if (p2.status === 302 || p2.status === 301) {
     let location = p2.headers.get("location") ?? "";
     if (location && !location.startsWith("http")) {
@@ -110,7 +122,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       mergeCookies(jar, p3.headers.getSetCookie?.() ?? []);
       console.log("Login paso3 status:", p3.status, "cookies:", jar.size);
 
-      // Puede haber otro redirect
       if (p3.status === 302 || p3.status === 301) {
         let loc2 = p3.headers.get("location") ?? "";
         if (loc2 && !loc2.startsWith("http")) loc2 = "https://zeusr.sii.cl" + loc2;
@@ -125,9 +136,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       }
     }
   } else {
-    // No hubo redirect — SII devolvió error
     const html = await p2.text();
-    // Extraer mensaje de error del HTML
     const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i)
       ?? html.match(/<b>([\s\S]{0,200})<\/b>/i)
       ?? html.match(/<p>([\s\S]{0,200})<\/p>/i);
@@ -136,7 +145,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     return null;
   }
 
-  // Verificar que tenemos TOKEN o NETSCAPE_LIVEWIRE
   const hasToken = jar.has("TOKEN") || jar.has("CSESSIONID");
   const hasLW = jar.has("NETSCAPE_LIVEWIRE.rut") || [...jar.keys()].some(k => k.startsWith("NETSCAPE_LIVEWIRE"));
   console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "keys=", [...jar.keys()].join(","));
@@ -149,7 +157,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   return cookieMapToHeader(jar);
 }
 
-// Llamada directa a la API REST del portal RCV de SII
 async function llamarApiRCV(
   cookies: string,
   rutDigitos: string,
@@ -157,7 +164,6 @@ async function llamarApiRCV(
   periodo: string,
   operacion: "COMPRA" | "VENTA"
 ): Promise<any[]> {
-  // El conversationId es el valor del cookie TOKEN o CSESSIONID
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -202,12 +208,10 @@ async function llamarApiRCV(
   const json = await resp.json();
   console.log(`getResumen ${operacion} respuesta:`, JSON.stringify(json).substring(0, 300));
 
-  // Extraer documentos del resumen
   const tipos = json?.data?.listaResumenDte ?? json?.data?.listaDte ?? json?.data ?? [];
   return Array.isArray(tipos) ? tipos : [];
 }
 
-// Obtener detalle de documentos por tipo
 async function llamarApiDetalle(
   cookies: string,
   rutDigitos: string,
@@ -301,7 +305,6 @@ export async function extraerRCV(
   const dv = rutNormalizado.slice(-1);
 
   try {
-    // 1. Login y obtener cookies de sesión
     console.log("Iniciando login SII...");
     const cookies = await loginSII(rutDigitos, dv, clave);
     if (!cookies) {
@@ -309,13 +312,11 @@ export async function extraerRCV(
     }
     console.log("Login exitoso. Cookies obtenidas.");
 
-    // 2. Obtener resumen de compras y ventas
     const [resumenCompras, resumenVentas] = await Promise.all([
       llamarApiRCV(cookies, rutDigitos, dv, period, "COMPRA"),
       llamarApiRCV(cookies, rutDigitos, dv, period, "VENTA"),
     ]);
 
-    // 3. Obtener detalle por cada tipo de documento
     const comprasPromises = resumenCompras.map((tipo: any) =>
       llamarApiDetalle(cookies, rutDigitos, dv, period, "COMPRA", tipo.tipoDoc ?? tipo.codDoc ?? tipo.tipo)
     );
