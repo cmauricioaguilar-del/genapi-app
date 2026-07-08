@@ -38,29 +38,58 @@ function mergeCookies(existing: Map<string, string>, setCookieHeaders: string[])
 function cookieMapToHeader(map: Map<string, string>): string {
   return Array.from(map.values()).join("; ");
 }
-
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const jar = new Map<string, string>();
-  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  const { chromium } = require("playwright");
 
-  // Paso 1: GET página de login para obtener cookies F5 (TS*) y campos ocultos del form
-  const p1 = await fetch(
-    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
-    {
-      headers: {
-        "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-419,es;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-      },
-      redirect: "follow",
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
+  try {
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      locale: "es-419",
+    });
+    const page = await context.newPage();
+
+    console.log("Playwright: navegando a login SII...");
+    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
+      waitUntil: "networkidle",
+      timeout: 30000,
+    });
+
+    await page.fill('input[name="rutcntr"]', `${rutDigitos}-${dv}`);
+    await page.fill('input[name="clave"]', clave);
+
+    await Promise.all([
+      page.waitForNavigation({ timeout: 15000, waitUntil: "networkidle" }).catch(() => {}),
+      page.click('input[type="submit"]'),
+    ]);
+
+    const cookies = await context.cookies();
+    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join("; ");
+
+    const hasToken = cookies.some((c: any) => c.name === "TOKEN" || c.name === "CSESSIONID");
+    const hasLW = cookies.some((c: any) => c.name.startsWith("NETSCAPE_LIVEWIRE"));
+
+    console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW,
+      "keys=", cookies.map((c: any) => c.name).join(","));
+
+    if (!hasToken && !hasLW) {
+      const html = await page.content();
+      const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
+      const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
+      console.error("Login SII error:", errMsg);
+      return null;
     }
-  );
-  mergeCookies(jar, p1.headers.getSetCookie?.() ?? []);
-  const html1 = await p1.text();
-  console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
+
+    return cookieHeader;
+  } finally {
+    await browser.close();
+  }
+}
+
 
   // Extraer campos ocultos del formulario
   const hiddenFields: Record<string, string> = {};
