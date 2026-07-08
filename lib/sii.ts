@@ -45,31 +45,46 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   const jar = new Map<string, string>();
   const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
-  // Paso 1: GET página de login para obtener cookies F5 (TS*)
+  // Paso 1: GET página de login para obtener cookies F5 (TS*) y campos ocultos del form
   const p1 = await fetch(
-    "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
+    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
     {
       headers: {
         "User-Agent": UA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "es-419,es;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
     }
   );
   mergeCookies(jar, p1.headers.getSetCookie?.() ?? []);
+  const html1 = await p1.text();
   console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
 
-  // Paso 2: POST login — redirect:manual para capturar cookies del 302
-  // El form usa JS para separar rut/dv desde rutcntr, pero el CGI acepta ambos formatos
-  // Enviamos rutcntr (campo visible) + rut + dv (campos hidden que JS llenaría)
+  // Extraer campos ocultos del formulario
+  const hiddenFields: Record<string, string> = {};
+  const inputRegex = /<input[^>]+type=["']hidden["'][^>]*>/gi;
+  const nameRegex = /name=["']([^"']+)["']/i;
+  const valueRegex = /value=["']([^"']*)["']/i;
+  let match;
+  while ((match = inputRegex.exec(html1)) !== null) {
+    const nameMatch = nameRegex.exec(match[0]);
+    const valueMatch = valueRegex.exec(match[0]);
+    if (nameMatch) hiddenFields[nameMatch[1]] = valueMatch ? valueMatch[1] : "";
+  }
+  console.log("Campos ocultos encontrados:", Object.keys(hiddenFields).join(","));
+
+  // Paso 2: POST login con todos los campos del formulario
   const formData = new URLSearchParams({
+    ...hiddenFields,
     rutcntr: `${rutDigitos}-${dv}`,
     rut: rutDigitos,
     dv: dv,
     clave: clave,
-    referencia: "http://www.sii.cl",
-    "411": "",
+    referencia: "https://www.sii.cl",
   });
 
   const p2 = await fetch(
