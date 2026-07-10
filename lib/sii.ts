@@ -26,9 +26,7 @@ function normalizarRut(rut: string): string {
 }
 
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const { chromium } = require("playwright-extra");
-  const stealth = require("puppeteer-extra-plugin-stealth");
-  chromium.use(stealth());
+  const { chromium } = require("playwright");
 
   const proxyUrl = process.env.PROXY_URL;
   let proxyConfig: { server: string; username?: string; password?: string } | undefined;
@@ -52,6 +50,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
+      "--disable-blink-features=AutomationControlled",
     ],
   });
 
@@ -64,7 +63,9 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await context.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      (window as any).chrome = { runtime: {} };
+      (window as any).chrome = { runtime: {}, app: {}, csi: () => {}, loadTimes: () => {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
     });
 
     const page = await context.newPage();
@@ -73,101 +74,63 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     page.on('requestfailed', (req: any) => {
       console.log('Request fallido:', req.url().substring(0, 120), req.failure()?.errorText);
     });
-    page.on('console', (msg: any) => {
-      const text = msg.text();
-      if (text.includes('411') || text.includes('code')) {
-        console.log('Browser console:', text.substring(0, 200));
-      }
-    });
-
-    // Observar cuándo el campo 411/code se agrega al DOM y si alguien setea su valor
-    await context.addInitScript(() => {
-      const proto411 = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
-      function watch411(el: HTMLInputElement) {
-        console.log('[411] campo añadido al DOM, valor inicial: "' + el.value + '"');
-        Object.defineProperty(el, 'value', {
-          set(v: string) {
-            console.log('[411] valor asignado: "' + String(v).substring(0, 120) + '"');
-            proto411.set!.call(this, v);
-          },
-          get() { return proto411.get!.call(this); },
-          configurable: true,
-        });
-      }
-      // Vigilar el body completo para detectar cuándo se inserta el campo
-      const obs = new MutationObserver((mutations) => {
-        for (const m of mutations) {
-          for (const node of Array.from(m.addedNodes)) {
-            const el = node as HTMLElement;
-            if (el.id === 'code' || (el as HTMLInputElement).name === '411') {
-              watch411(el as HTMLInputElement);
-            }
-            // Buscar dentro de nodos contenedores
-            const inside = (el.querySelectorAll) ? el.querySelectorAll('#code, [name="411"]') : [];
-            for (const child of Array.from(inside)) {
-              watch411(child as HTMLInputElement);
-            }
-          }
-        }
-      });
-      obs.observe(document.documentElement, { childList: true, subtree: true });
-    });
 
     await page.route('**CAutInicio.cgi**', async (route: any) => {
-      console.log('POST interceptado. Body:', route.request().postData());
+      console.log('POST body:', route.request().postData());
       await route.continue();
     });
 
-    console.log("Playwright Xvfb non-headless: navegando a login SII...");
+    console.log("Navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "networkidle",
       timeout: 60000,
     });
 
-    // Esperar hasta 10s por si algo puebla el campo asincronamente
+    // Diagnosticar qué scripts cargó F5 y el valor inicial del campo 411
+    const diag = await page.evaluate(() => {
+      const scripts = Array.from(document.querySelectorAll('script[src]')).map((s: any) => s.src);
+      const inlines = Array.from(document.querySelectorAll('script:not([src])')).length;
+      const f = document.querySelector('input[id="code"], input[name="411"]') as HTMLInputElement | null;
+      const allInputs = Array.from(document.querySelectorAll('input')).map((i: any) => i.name + '=' + (i.value || '').substring(0, 30));
+      return { scripts, inlines, field411: f ? `val="${f.value}" type="${f.type}"` : 'NO ENCONTRADO', allInputs };
+    });
+    console.log('Scripts externos:', JSON.stringify(diag.scripts));
+    console.log('Scripts inline:', diag.inlines);
+    console.log('Campo 411 inicial:', diag.field411);
+    console.log('Inputs:', JSON.stringify(diag.allInputs));
+
+    // Esperar hasta 30s a que F5 pueble el campo
     try {
       await page.waitForFunction(() => {
-        const el = document.querySelector('input[id="code"]') as HTMLInputElement;
+        const el = document.querySelector('input[id="code"], input[name="411"]') as HTMLInputElement;
         return el && el.value.length > 0;
-      }, { timeout: 10000 });
-      console.log('Campo 411 poblado!');
+      }, { timeout: 30000 });
+      const val = await page.evaluate(() => (document.querySelector('input[id="code"]') as HTMLInputElement)?.value);
+      console.log('Campo 411 poblado:', val?.substring(0, 50));
     } catch (_) {
-      const val = await page.evaluate(() =>
-        (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)'
-      );
-      console.log('Campo 411 despues de espera:', val);
+      console.log('Campo 411 sigue vacío después de 30s');
     }
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
-
     await page.click('input[name="rutcntr"]');
     await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
     await page.press('input[name="rutcntr"]', 'Tab');
     await page.waitForTimeout(500);
-
     await page.click('input[name="clave"]');
     await page.type('input[name="clave"]', clave, { delay: 80 });
     await page.waitForTimeout(1000);
 
-    const codeBeforeSubmit = await page.evaluate(() => {
-      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
-    });
-    console.log("Campo 411 antes de submit:", codeBeforeSubmit);
-
-    console.log("Clickeando botón #bt_ingresar...");
+    console.log("Clickeando #bt_ingresar...");
     await Promise.all([
       page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
       page.click('#bt_ingresar'),
     ]);
 
     console.log("Post-login URL:", page.url());
-
     const cookies = await context.cookies();
     const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join("; ");
-
     const hasToken = cookies.some((c: any) => c.name === "TOKEN" || c.name === "CSESSIONID");
     const hasLW = cookies.some((c: any) => c.name.startsWith("NETSCAPE_LIVEWIRE"));
-
     console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW,
       "keys=", cookies.map((c: any) => c.name).join(","));
 
