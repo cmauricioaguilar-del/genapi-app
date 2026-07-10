@@ -1,6 +1,5 @@
 [phases.setup]
-nixPkgs = ["chromium", "nss", "freetype", "harfbuzz", "ca-certificates", "ttf-dejavu"]
+nixPkgs = ["glib", "nss", "nspr", "atk", "cups", "libdrm", "dbus", "libxkbcommon", "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext", "xorg.libXfixes", "xorg.libXrandr", "xorg.libxcb", "mesa", "expat", "alsa-lib"]
 
-[variables]
-PUPPETEER_SKIP_DOWNLOAD = "true"
-PUPPETEER_EXECUTABLE_PATH = "/run/current-system/sw/bin/chromium"
+[phases.install]
+cmds = ["npm ci --legacy-peer-deps", "npx playwright install chromium --with-deps"]
