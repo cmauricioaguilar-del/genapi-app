@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 \
     libgbm1 libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
     ca-certificates fonts-liberation \
+    xvfb \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,6 +21,7 @@ RUN npm run build
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV DISPLAY=:99
 
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x720x24 -ac & sleep 1 && npm start"]

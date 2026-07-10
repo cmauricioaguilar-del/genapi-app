@@ -26,16 +26,15 @@ function normalizarRut(rut: string): string {
 }
 
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const { chromium } = require("playwright-extra");
-  const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-  chromium.use(StealthPlugin());
+  const { chromium } = require("playwright");
 
   const browser = await chromium.launch({
-    headless: true,
+    headless: false,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
     ],
   });
 
@@ -44,6 +43,11 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-419",
       viewport: { width: 1280, height: 720 },
+    });
+
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      (window as any).chrome = { runtime: {} };
     });
 
     const page = await context.newPage();
@@ -59,7 +63,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       await route.continue();
     });
 
-    console.log("Playwright stealth: navegando a login SII...");
+    console.log("Playwright Xvfb non-headless: navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "load",
       timeout: 60000,
