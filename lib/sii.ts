@@ -50,47 +50,38 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
-    // Rellenar campo visible y disparar eventos para que JS de SII procese el RUT
-    await page.fill('input[name="rutcntr"]', `${rutDigitos}-${dv}`);
-    await page.dispatchEvent('input[name="rutcntr"]', 'change');
-    await page.dispatchEvent('input[name="rutcntr"]', 'blur');
-    await page.fill('input[name="clave"]', clave);
-    await page.dispatchEvent('input[name="clave"]', 'change');
+    // Simular escritura real tecla por tecla para activar JS de SII
+    await page.click('input[name="rutcntr"]');
+    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
+    await page.press('input[name="rutcntr"]', 'Tab');
+    await page.waitForTimeout(500);
 
-    // Esperar que JS de SII rellene los campos ocultos
-    await page.waitForTimeout(1500);
+    await page.click('input[name="clave"]');
+    await page.type('input[name="clave"]', clave, { delay: 80 });
+    await page.waitForTimeout(1000);
 
-    // Rellenar campos ocultos directamente por si el JS no los llenó
-    await page.evaluate((args: { rutDigitos: string; dv: string }) => {
-      const rutInput = document.querySelector('input[name="rut"]') as HTMLInputElement;
-      const dvInput = document.querySelector('input[name="dv"]') as HTMLInputElement;
-      if (rutInput) rutInput.value = args.rutDigitos;
-      if (dvInput) dvInput.value = args.dv;
-    }, { rutDigitos, dv });
-
-    // Debug: ver estado de campos ocultos y botones disponibles
+    // Debug: ver estado de campos ocultos después de escritura
     const debug = await page.evaluate(() => {
       const rut = (document.querySelector('input[name="rut"]') as HTMLInputElement)?.value;
       const dv = (document.querySelector('input[name="dv"]') as HTMLInputElement)?.value;
       const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value;
-      const buttons = Array.from(document.querySelectorAll('button, a[onclick], input[type="image"]')).map((b: any) =>
-        `${b.tagName}|${b.id}|${b.className}|${b.type || ""}|${(b.textContent || b.value || "").trim().substring(0, 30)}`
-      ).join(" /// ");
-      return { rut, dv, code, buttons };
+      return { rut, dv, code };
     });
-    console.log("Debug campos:", JSON.stringify(debug));
+    console.log("Debug campos antes de submit:", JSON.stringify(debug));
 
-    // Intentar hacer click en botón real si existe, si no usar form.submit()
-    const clicked = await page.evaluate(() => {
-      const btn = document.querySelector('button[type="submit"], button:not([type]), input[type="image"]') as HTMLElement;
-      if (btn) { btn.click(); return true; }
-      const form = document.querySelector('form') as HTMLFormElement;
-      if (form) { form.submit(); return true; }
-      return false;
-    });
-    console.log("Submit ejecutado:", clicked);
+    // Si rut/dv siguen vacíos, rellenarlos manualmente
+    await page.evaluate((args: { rutDigitos: string; dv: string }) => {
+      const rutInput = document.querySelector('input[name="rut"]') as HTMLInputElement;
+      const dvInput = document.querySelector('input[name="dv"]') as HTMLInputElement;
+      if (rutInput && !rutInput.value) rutInput.value = args.rutDigitos;
+      if (dvInput && !dvInput.value) dvInput.value = args.dv;
+    }, { rutDigitos, dv });
 
-    await page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {});
+    console.log("Clickeando botón #bt_ingresar...");
+    await Promise.all([
+      page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
+      page.click('#bt_ingresar'),
+    ]);
 
     console.log("Post-login URL:", page.url());
 
