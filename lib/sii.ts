@@ -198,7 +198,7 @@ async function llamarApiDetalle(
       ptributario: periodo,
       estadoContab: "REGISTRO",
       operacion,
-      tipoDocumento: tipoDoc,
+      tipoDocumento: isNaN(Number(tipoDoc)) ? tipoDoc : Number(tipoDoc),
       busquedaInicial: true,
     },
   };
@@ -220,7 +220,8 @@ async function llamarApiDetalle(
   );
 
   if (!resp.ok) {
-    console.error(`getDetalle HTTP ${resp.status} para ${operacion}/${tipoDoc}`);
+    const errBody = await resp.text().catch(() => "");
+    console.error(`getDetalle HTTP ${resp.status} para ${operacion}/${tipoDoc}: ${errBody.substring(0, 300)}`);
     return [];
   }
 
