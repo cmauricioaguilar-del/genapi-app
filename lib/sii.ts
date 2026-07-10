@@ -104,22 +104,22 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     console.log('Scripts externos:', JSON.stringify(diag.scripts));
     console.log('navigator.webdriver:', diag.webdriver);
     console.log('Campo 411 inicial:', diag.field411);
-    // Buscar "code" en AutAll.js
-    const autAllCode = await page.evaluate(async () => {
+    // Buscar getElementById en AutAll.js para ver qué campos manipula
+    const autAllDiag = await page.evaluate(async () => {
       try {
         const r = await fetch('https://zeusr.sii.cl/AUT2000/js/AutAll.js');
         const text = await r.text();
         const hits: string[] = [];
-        let idx = 0;
-        while ((idx = text.indexOf('code', idx)) !== -1) {
-          hits.push(text.substring(Math.max(0, idx - 30), idx + 80));
-          idx += 4;
-          if (hits.length >= 10) break;
+        const patterns = ['getElementById', 'getElement', '411', 'code', 'rut', 'clave', 'submit'];
+        for (const pat of patterns) {
+          const idx = text.indexOf(pat);
+          if (idx >= 0) hits.push(`[${pat}]: ...${text.substring(Math.max(0,idx-20), idx+100)}...`);
         }
-        return hits;
-      } catch (e: any) { return ['error: ' + e.message]; }
+        return { len: text.length, hits };
+      } catch (e: any) { return { len: 0, hits: ['error: ' + (e as any).message] }; }
     });
-    console.log('AutAll.js refs a "code":', JSON.stringify(autAllCode));
+    console.log('AutAll.js len:', autAllDiag.len);
+    console.log('AutAll.js hits:', JSON.stringify(autAllDiag.hits));
 
     // Esperar hasta 30s a que F5 pueble el campo
     try {
@@ -158,7 +158,9 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     if (!hasToken && !hasLW) {
       const html = await page.content();
-      console.log('HTML post-login (primeros 2000 chars):', html.substring(0, 2000));
+      // Extraer texto visible (sin tags) para ver el mensaje de error real
+      const texto = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      console.log('Texto post-login:', texto.substring(0, 1500));
       const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
       const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
       console.error("Login SII sin cookies. Error:", errMsg);
