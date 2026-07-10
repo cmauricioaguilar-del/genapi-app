@@ -104,14 +104,22 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     console.log('Scripts externos:', JSON.stringify(diag.scripts));
     console.log('navigator.webdriver:', diag.webdriver);
     console.log('Campo 411 inicial:', diag.field411);
-    for (let i = 0; i < diag.inlines.length; i++) {
-      const s = diag.inlines[i];
-      if (s.includes('411') || s.includes('code') || s.includes('TS') || s.includes('challenge')) {
-        console.log(`Inline[${i}] (relevante):`, s.substring(0, 500));
-      } else {
-        console.log(`Inline[${i}]:`, s.substring(0, 80));
-      }
-    }
+    // Buscar "code" en AutAll.js
+    const autAllCode = await page.evaluate(async () => {
+      try {
+        const r = await fetch('https://zeusr.sii.cl/AUT2000/js/AutAll.js');
+        const text = await r.text();
+        const hits: string[] = [];
+        let idx = 0;
+        while ((idx = text.indexOf('code', idx)) !== -1) {
+          hits.push(text.substring(Math.max(0, idx - 30), idx + 80));
+          idx += 4;
+          if (hits.length >= 10) break;
+        }
+        return hits;
+      } catch (e: any) { return ['error: ' + e.message]; }
+    });
+    console.log('AutAll.js refs a "code":', JSON.stringify(autAllCode));
 
     // Esperar hasta 30s a que F5 pueble el campo
     try {
@@ -150,6 +158,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     if (!hasToken && !hasLW) {
       const html = await page.content();
+      console.log('HTML post-login (primeros 2000 chars):', html.substring(0, 2000));
       const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
       const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
       console.error("Login SII sin cookies. Error:", errMsg);
