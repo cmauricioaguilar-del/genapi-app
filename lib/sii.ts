@@ -30,21 +30,35 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
   });
 
   try {
     const context = await browser.newContext({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-419",
+      viewport: { width: 1280, height: 720 },
     });
+
+    // Ocultar que es un navegador automatizado
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['es-419', 'es', 'en'] });
+      (window as any).chrome = { runtime: {} };
+    });
+
     const page = await context.newPage();
 
-    // Capturar requests fallidos (scripts externos que no cargan)
-    page.on('requestfailed', (req: any) => {
-      console.log('Request fallido:', req.url(), req.failure()?.errorText);
-    });
     page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
+    page.on('requestfailed', (req: any) => {
+      console.log('Request fallido:', req.url().substring(0, 100), req.failure()?.errorText);
+    });
 
     // Interceptar POST al CGI
     await page.route('**CAutInicio.cgi**', async (route: any) => {
@@ -63,44 +77,33 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
-    // Inspeccionar el botón
-    const btnInfo = await page.evaluate(() => {
-      const btn = document.querySelector('#bt_ingresar') as HTMLElement;
+    // Debug form onsubmit e inline scripts
+    const formDebug = await page.evaluate(() => {
+      const form = document.querySelector('#myform') as HTMLFormElement;
+      const inlineScripts = Array.from(document.querySelectorAll('script:not([src])')).map((s: any) => s.textContent?.substring(0, 300)).join(' ||| ');
       return {
-        onclick: btn?.getAttribute('onclick'),
-        type: btn?.getAttribute('type'),
-        form: (btn as HTMLButtonElement)?.form?.id,
+        onsubmit: form?.getAttribute('onsubmit'),
+        action: form?.getAttribute('action'),
+        inlineScripts: inlineScripts.substring(0, 800),
       };
     });
-    console.log("Botón bt_ingresar info:", JSON.stringify(btnInfo));
+    console.log("Form debug:", JSON.stringify(formDebug));
 
     // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
     await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
     await page.press('input[name="rutcntr"]', 'Tab');
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1000);
 
     await page.click('input[name="clave"]');
     await page.type('input[name="clave"]', clave, { delay: 100 });
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1000);
 
-    // Intentar ejecutar el onclick del botón manualmente para que genere el campo 411
-    const onclickResult = await page.evaluate(() => {
-      const btn = document.querySelector('#bt_ingresar') as HTMLElement;
-      const onclick = btn?.getAttribute('onclick');
-      let result = { onclick, codeAfter: '' };
-      if (onclick) {
-        try {
-          // eslint-disable-next-line no-eval
-          eval(onclick);
-        } catch(e: any) {
-          result = { ...result, onclick: onclick + ' [ERROR: ' + e.message + ']' };
-        }
-      }
-      result.codeAfter = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
-      return result;
+    // Ver campo 411 antes de click
+    const codeVal = await page.evaluate(() => {
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
     });
-    console.log("Onclick ejecutado manualmente:", JSON.stringify(onclickResult));
+    console.log("Campo 411 antes de click:", codeVal);
 
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
