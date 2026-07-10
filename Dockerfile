@@ -1,13 +1,17 @@
-FROM node:20-slim
+FROM mcr.microsoft.com/playwright:v1.49.0-jammy
 
 WORKDIR /app
+
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 COPY . .
 RUN npx prisma generate
 RUN npm run build
 
-EXPOSE 3000
+ENV NODE_ENV=production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PORT=3000
-CMD ["sh", "-c", "npx prisma db push --skip-generate 2>/dev/null; npm start"]
+
+EXPOSE 3000
+CMD ["npm", "start"]

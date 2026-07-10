@@ -1,5 +1,1 @@
-[phases.setup]
-nixPkgs = ["glib", "nss", "nspr", "atk", "cups", "libdrm", "dbus", "libxkbcommon", "xorg.libX11", "xorg.libXcomposite", "xorg.libXdamage", "xorg.libXext", "xorg.libXfixes", "xorg.libXrandr", "xorg.libxcb", "mesa", "expat", "alsa-lib"]
-
-[phases.install]
-cmds = ["npm ci --legacy-peer-deps", "npx playwright install chromium --with-deps"]
+# Railway usará el Dockerfile en lugar de nixpacks
