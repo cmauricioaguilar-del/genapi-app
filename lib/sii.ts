@@ -29,15 +29,22 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   const { chromium } = require("playwright");
 
   const proxyUrl = process.env.PROXY_URL;
+  let proxyConfig: { server: string; username?: string; password?: string } | undefined;
   if (proxyUrl) {
-    console.log('Usando proxy:', proxyUrl.replace(/:[^:@]+@/, ':***@'));
+    const u = new URL(proxyUrl);
+    proxyConfig = {
+      server: `${u.protocol}//${u.host}`,
+      username: u.username || undefined,
+      password: u.password || undefined,
+    };
+    console.log('Usando proxy:', `${u.protocol}//${u.host}`, 'user:', u.username || '(none)');
   } else {
     console.log('Sin proxy configurado (PROXY_URL no definida)');
   }
 
   const browser = await chromium.launch({
     headless: false,
-    proxy: proxyUrl ? { server: proxyUrl } : undefined,
+    proxy: proxyConfig,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
