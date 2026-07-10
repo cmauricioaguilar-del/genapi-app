@@ -28,8 +28,16 @@ function normalizarRut(rut: string): string {
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const { chromium } = require("playwright");
 
+  const proxyUrl = process.env.PROXY_URL;
+  if (proxyUrl) {
+    console.log('Usando proxy:', proxyUrl.replace(/:[^:@]+@/, ':***@'));
+  } else {
+    console.log('Sin proxy configurado (PROXY_URL no definida)');
+  }
+
   const browser = await chromium.launch({
     headless: false,
+    proxy: proxyUrl ? { server: proxyUrl } : undefined,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -106,31 +114,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       waitUntil: "networkidle",
       timeout: 60000,
     });
-
-    // Loguear scripts inline para encontrar cuál inserta el campo 411
-    const inlineScripts = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('script:not([src])')).map(s => ({
-        len: s.textContent?.length ?? 0,
-        content: s.textContent?.substring(0, 400) ?? '',
-      }));
-    });
-    for (const s of inlineScripts) {
-      if (s.content.includes('411') || s.content.includes('code') || s.content.includes('TS')) {
-        console.log(`[inline ${s.len}chars]:`, s.content.substring(0, 400));
-      }
-    }
-
-    // Loguear parte de AutAll.js buscando referencias al campo 411
-    const autAllRef = await page.evaluate(async () => {
-      try {
-        const r = await fetch('https://zeusr.sii.cl/AUT2000/js/AutAll.js');
-        const t = await r.text();
-        const idx = t.indexOf('411');
-        if (idx >= 0) return '[AutAll 411 ref]: ' + t.substring(Math.max(0, idx - 50), idx + 200);
-        return '[AutAll.js sin ref a 411, len=' + t.length + ']';
-      } catch (e: any) { return '[AutAll.js error]: ' + e.message; }
-    });
-    console.log(autAllRef);
 
     // Esperar hasta 10s por si algo puebla el campo asincronamente
     try {
