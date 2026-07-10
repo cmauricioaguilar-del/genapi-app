@@ -33,24 +33,14 @@ function formatearRutConPuntos(rutDigitos: string): string {
   return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
 }
 
-function getDispatcher(proxyUrl?: string): any {
-  if (!proxyUrl) return undefined;
-  const { ProxyAgent } = require("undici");
-  return new ProxyAgent(proxyUrl);
-}
-
-async function siFetch(url: string, options: any = {}, dispatcher?: any): Promise<Response> {
-  const { fetch: undiciFetch } = require("undici");
-  return undiciFetch(url, { ...options, dispatcher });
+async function siFetch(url: string, options: any = {}): Promise<Response> {
+  return fetch(url, options);
 }
 
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const proxyUrl = process.env.PROXY_URL;
-  const dispatcher = getDispatcher(proxyUrl);
-
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
-  console.log("HTTP login SII (sin browser)", proxyUrl ? `proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}` : "sin proxy");
+  console.log("HTTP login SII (sin browser, fetch directo)");
   console.log("RUT:", rutConPuntos);
 
   const baseHeaders: Record<string, string> = {
@@ -62,8 +52,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   // Paso 1: GET página de login para obtener cookies F5
   const getResp = await siFetch(
     "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
-    { headers: baseHeaders },
-    dispatcher
+    { headers: baseHeaders }
   );
 
   const getCookies: string[] = getResp.headers.getSetCookie
@@ -95,8 +84,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       },
       body: formBody,
       redirect: "follow",
-    },
-    dispatcher
+    }
   );
 
   const postCookies: string[] = postResp.headers.getSetCookie
@@ -129,9 +117,6 @@ async function llamarApiRCV(
   periodo: string,
   operacion: "COMPRA" | "VENTA"
 ): Promise<any[]> {
-  const proxyUrl = process.env.PROXY_URL;
-  const dispatcher = getDispatcher(proxyUrl);
-
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -165,8 +150,7 @@ async function llamarApiRCV(
         "Cookie": cookies,
       },
       body: JSON.stringify(payload),
-    },
-    dispatcher
+    }
   );
 
   if (!resp.ok) {
@@ -189,9 +173,6 @@ async function llamarApiDetalle(
   operacion: "COMPRA" | "VENTA",
   tipoDoc: string
 ): Promise<DocumentoSII[]> {
-  const proxyUrl = process.env.PROXY_URL;
-  const dispatcher = getDispatcher(proxyUrl);
-
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -226,8 +207,7 @@ async function llamarApiDetalle(
         "Cookie": cookies,
       },
       body: JSON.stringify(payload),
-    },
-    dispatcher
+    }
   );
 
   if (!resp.ok) {
