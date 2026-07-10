@@ -40,13 +40,13 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     });
     const page = await context.newPage();
 
-    // Capturar errores JS y consola del navegador
-    page.on('console', (msg: any) => {
-      if (msg.type() === 'error') console.log('Browser JS error:', msg.text());
+    // Capturar requests fallidos (scripts externos que no cargan)
+    page.on('requestfailed', (req: any) => {
+      console.log('Request fallido:', req.url(), req.failure()?.errorText);
     });
     page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
 
-    // Interceptar el POST real al CGI para ver qué campos envía
+    // Interceptar POST al CGI
     await page.route('**CAutInicio.cgi**', async (route: any) => {
       const req = route.request();
       console.log('POST interceptado a CGI. Body:', req.postData());
@@ -59,9 +59,20 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       timeout: 60000,
     });
 
-    console.log("Página cargada. Título:", await page.title(), "URL:", page.url());
+    console.log("Página cargada. Título:", await page.title());
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
+
+    // Inspeccionar el botón
+    const btnInfo = await page.evaluate(() => {
+      const btn = document.querySelector('#bt_ingresar') as HTMLElement;
+      return {
+        onclick: btn?.getAttribute('onclick'),
+        type: btn?.getAttribute('type'),
+        form: (btn as HTMLButtonElement)?.form?.id,
+      };
+    });
+    console.log("Botón bt_ingresar info:", JSON.stringify(btnInfo));
 
     // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
@@ -73,22 +84,23 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     await page.type('input[name="clave"]', clave, { delay: 100 });
     await page.waitForTimeout(800);
 
-    // Ver campos ocultos
-    const debug = await page.evaluate(() => {
-      const rut = (document.querySelector('input[name="rut"]') as HTMLInputElement)?.value;
-      const dv = (document.querySelector('input[name="dv"]') as HTMLInputElement)?.value;
-      const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value;
-      return { rut, dv, code };
+    // Intentar ejecutar el onclick del botón manualmente para que genere el campo 411
+    const onclickResult = await page.evaluate(() => {
+      const btn = document.querySelector('#bt_ingresar') as HTMLElement;
+      const onclick = btn?.getAttribute('onclick');
+      let result = { onclick, codeAfter: '' };
+      if (onclick) {
+        try {
+          // eslint-disable-next-line no-eval
+          eval(onclick);
+        } catch(e: any) {
+          result = { ...result, onclick: onclick + ' [ERROR: ' + e.message + ']' };
+        }
+      }
+      result.codeAfter = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+      return result;
     });
-    console.log("Debug campos antes de submit:", JSON.stringify(debug));
-
-    // Rellenar manualmente si están vacíos
-    await page.evaluate((args: { rutDigitos: string; dv: string }) => {
-      const rutInput = document.querySelector('input[name="rut"]') as HTMLInputElement;
-      const dvInput = document.querySelector('input[name="dv"]') as HTMLInputElement;
-      if (rutInput && !rutInput.value) rutInput.value = args.rutDigitos;
-      if (dvInput && !dvInput.value) dvInput.value = args.dv;
-    }, { rutDigitos, dv });
+    console.log("Onclick ejecutado manualmente:", JSON.stringify(onclickResult));
 
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
