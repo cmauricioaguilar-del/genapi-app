@@ -56,6 +56,42 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     page.on('requestfailed', (req: any) => {
       console.log('Request fallido:', req.url().substring(0, 120), req.failure()?.errorText);
     });
+    page.on('console', (msg: any) => {
+      const text = msg.text();
+      if (text.includes('411') || text.includes('TS') || text.includes('code')) {
+        console.log('Browser console:', text.substring(0, 200));
+      }
+    });
+
+    // MutationObserver para detectar si algo setea el campo 411
+    await context.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('code');
+        if (el) {
+          const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+          Object.defineProperty(el, 'value', {
+            set(v: string) {
+              console.log('[411-setter] valor asignado:', v.substring(0, 80));
+              proto.set!.call(this, v);
+            },
+            get() { return proto.get!.call(this); },
+          });
+        } else {
+          console.log('[411-debug] campo code/411 NO encontrado en DOM');
+        }
+      });
+    });
+
+    // Interceptar scripts de F5 para diagnóstico
+    await page.route('**/*.js', async (route: any) => {
+      const response = await route.fetch();
+      const url = route.request().url();
+      const body = await response.text();
+      if (body.includes('"411"') || body.includes("'411'") || body.includes('getElementById("code")') || body.includes("getElementById('code')")) {
+        console.log('Script F5 con ref a 411:', url.substring(0, 150));
+      }
+      await route.fulfill({ response });
+    });
 
     await page.route('**CAutInicio.cgi**', async (route: any) => {
       const req = route.request();
@@ -69,13 +105,32 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       timeout: 60000,
     });
 
-    // Esperar que F5 ejecute su fingerprinting y pueble el campo 411
-    await page.waitForTimeout(5000);
+    // Diagnóstico post-carga
+    const htmlDebug = await page.evaluate(() => {
+      const scripts = Array.from(document.querySelectorAll('script'))
+        .map((s: any) => s.src || `(inline ${s.textContent?.length ?? 0} chars)`);
+      const fields = Array.from(document.querySelectorAll('input'))
+        .map((i: any) => `${i.name}(${i.type})=${(i.value ?? '').substring(0, 30)}`);
+      return { scripts, fields };
+    });
+    console.log('Scripts cargados:', JSON.stringify(htmlDebug.scripts));
+    console.log('Campos del form:', JSON.stringify(htmlDebug.fields));
+
+    // Esperar hasta 12s por si F5 puebla el campo asincronamente
+    try {
+      await page.waitForFunction(() => {
+        const el = document.querySelector('input[id="code"]') as HTMLInputElement;
+        return el && el.value.length > 0;
+      }, { timeout: 12000 });
+      console.log('Campo 411 poblado exitosamente!');
+    } catch (_) {
+      console.log('Campo 411 NO poblado despues de 12s (F5 no ejecuto el challenge)');
+    }
 
     const codeAfterLoad = await page.evaluate(() => {
       return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
     });
-    console.log("Campo 411 despues de 5s page load:", codeAfterLoad);
+    console.log("Campo 411 final:", codeAfterLoad);
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
@@ -86,12 +141,19 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.click('input[name="clave"]');
     await page.type('input[name="clave"]', clave, { delay: 80 });
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     const codeBeforeSubmit = await page.evaluate(() => {
       return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
     });
     console.log("Campo 411 antes de submit:", codeBeforeSubmit);
+
+    // IP publica del contenedor (para diagnóstico de reputación F5)
+    try {
+      const ipResp = await fetch('https://api.ipify.org?format=json');
+      const ipJson = await ipResp.json();
+      console.log('IP publica Railway:', ipJson.ip);
+    } catch (_) {}
 
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
