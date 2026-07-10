@@ -48,14 +48,33 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     console.log("Página cargada. Título:", await page.title(), "URL:", page.url());
 
-    await page.waitForSelector('input[name="rutcntr"]', { timeout: 30000 });
+    await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
+
+    // Debug: ver qué inputs hay en el formulario
+    const formDebug = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input')).map(i =>
+        `${i.type}|${i.name}|${i.id}|${i.className}`
+      );
+      return inputs.join(' /// ');
+    });
+    console.log("Inputs en página:", formDebug);
+
     await page.fill('input[name="rutcntr"]', `${rutDigitos}-${dv}`);
     await page.fill('input[name="clave"]', clave);
 
-    console.log("Campos llenados. Enviando formulario con Enter...");
+    console.log("Campos llenados. Enviando via JS form.submit()...");
     await Promise.all([
       page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
-      page.press('input[name="clave"]', "Enter"),
+      page.evaluate(() => {
+        const form = document.querySelector('form') as HTMLFormElement;
+        if (form) {
+          form.submit();
+        } else {
+          // fallback: click cualquier input submit o image
+          const btn = document.querySelector('input[type="submit"], input[type="image"], button[type="submit"]') as HTMLElement;
+          if (btn) btn.click();
+        }
+      }),
     ]);
 
     console.log("Post-login URL:", page.url());
@@ -73,7 +92,8 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       const html = await page.content();
       const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
       const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
-      console.error("Login SII error:", errMsg);
+      console.error("Login SII sin cookies. Error en página:", errMsg);
+      console.error("HTML snippet:", html.substring(0, 800));
       return null;
     }
 
