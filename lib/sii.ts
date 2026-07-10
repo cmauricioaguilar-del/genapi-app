@@ -69,53 +69,54 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   const inlineScripts = [...getHtml.matchAll(/<script[^>]*>([\s\S]{0,300}?)<\/script>/gi)].map(m => m[1].trim()).filter(Boolean);
   console.log("Inline scripts GET:", inlineScripts.length, "| primeros 200c:", inlineScripts.map(s => s.substring(0, 100)).join(" | "));
 
-  // Paso 2: POST formulario de login (igual que el browser)
   const formBody = new URLSearchParams({
     rut: rutDigitos,
     dv,
-    referencia: "http://www.sii.cl",
+    referencia: "https://homer.sii.cl/",
     "411": "",
     rutcntr: rutConPuntos,
     clave,
   }).toString();
 
-  const postResp = await siFetch(
-    "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi",
-    {
+  // Intentar palena.sii.cl primero (servidor usado por ERPs, sin F5 browser challenge)
+  const endpoints = [
+    { url: "https://palena.sii.cl/cgi_AUT2000/CAutInicio.cgi", origin: "https://palena.sii.cl", referer: "https://palena.sii.cl/" },
+    { url: "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi", origin: "https://zeusr.sii.cl", referer: "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html" },
+  ];
+
+  for (const ep of endpoints) {
+    const postResp = await siFetch(ep.url, {
       method: "POST",
       headers: {
         ...baseHeaders,
         "Content-Type": "application/x-www-form-urlencoded",
-        "Origin": "https://zeusr.sii.cl",
-        "Referer": "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
+        "Origin": ep.origin,
+        "Referer": ep.referer,
         "Cookie": cookieJar,
       },
       body: formBody,
       redirect: "follow",
+    });
+
+    const postCookies: string[] = postResp.headers.getSetCookie ? postResp.headers.getSetCookie() : [];
+    const allCookies = [...getCookies, ...postCookies].map((c: string) => c.split(";")[0]);
+    const finalCookieStr = allCookies.join("; ");
+    const hasToken = allCookies.some((c: string) => c.startsWith("TOKEN=") || c.startsWith("CSESSIONID="));
+    const hasLW = allCookies.some((c: string) => c.startsWith("NETSCAPE_LIVEWIRE"));
+
+    console.log(`${ep.url}: status=${postResp.status} TOKEN=${hasToken} LIVEWIRE=${hasLW} cookies=${allCookies.map((c: string) => c.split("=")[0]).join(",")}`);
+
+    if (hasToken || hasLW) {
+      console.log("Login exitoso vía", ep.url);
+      return finalCookieStr;
     }
-  );
 
-  const postCookies: string[] = postResp.headers.getSetCookie
-    ? postResp.headers.getSetCookie()
-    : [];
-  const allCookies = [...getCookies, ...postCookies].map((c: string) => c.split(";")[0]);
-  const finalCookieStr = allCookies.join("; ");
-
-  const hasToken = allCookies.some((c: string) => c.startsWith("TOKEN=") || c.startsWith("CSESSIONID="));
-  const hasLW = allCookies.some((c: string) => c.startsWith("NETSCAPE_LIVEWIRE"));
-
-  console.log("POST status:", postResp.status, "| final URL:", postResp.url);
-  console.log("Cookies: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "| nombres:", allCookies.map((c: string) => c.split("=")[0]).join(","));
-
-  if (!hasToken && !hasLW) {
-    const html = await postResp.text();
-    const texto = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    console.error("Login fallido. Respuesta SII:", texto.substring(0, 600));
-    return null;
+    const texto = (await postResp.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    console.log("Respuesta:", texto.substring(0, 300));
   }
 
-  console.log("Login exitoso. Cookies obtenidas.");
-  return finalCookieStr;
+  console.error("Login fallido en todos los endpoints.");
+  return null;
 }
 
 async function llamarApiRCV(
