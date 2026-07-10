@@ -26,7 +26,9 @@ function normalizarRut(rut: string): string {
 }
 
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const { chromium } = require("playwright");
+  const { chromium } = require("playwright-extra");
+  const stealth = require("puppeteer-extra-plugin-stealth");
+  chromium.use(stealth());
 
   const proxyUrl = process.env.PROXY_URL;
   let proxyConfig: { server: string; username?: string; password?: string } | undefined;
