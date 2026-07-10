@@ -28,8 +28,16 @@ function normalizarRut(rut: string): string {
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const { chromium } = require("playwright");
 
+  const proxyUrl = process.env.PROXY_URL;
+  if (proxyUrl) {
+    console.log('Usando proxy:', proxyUrl.replace(/:[^:@]+@/, ':***@'));
+  } else {
+    console.log('Sin proxy configurado (PROXY_URL no definida)');
+  }
+
   const browser = await chromium.launch({
     headless: false,
+    proxy: proxyUrl ? { server: proxyUrl } : undefined,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
