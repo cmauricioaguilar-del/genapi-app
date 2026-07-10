@@ -71,16 +71,22 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       timeout: 60000,
     });
 
-    console.log("Página cargada. Título:", await page.title());
+    // Esperar 4 segundos por si F5 setea el campo 411 asincronamente
+    await page.waitForTimeout(4000);
+
+    const codeAfterLoad = await page.evaluate(() => {
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+    });
+    console.log("Campo 411 despues de 4s page load:", codeAfterLoad);
+
+    // Ver fuente de validaAut
+    const validaSource = await page.evaluate(() => {
+      return (window as any).validaAut?.toString().substring(0, 600) || 'NOT FOUND';
+    });
+    console.log("validaAut source:", validaSource);
+
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
-    // Ver codigo fuente de ejecuta_opcion
-    const fnSource = await page.evaluate(() => {
-      return (window as any).ejecuta_opcion?.toString().substring(0, 600) || 'NOT FOUND';
-    });
-    console.log("ejecuta_opcion source:", fnSource);
-
-    // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
     await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
     await page.press('input[name="rutcntr"]', 'Tab');
@@ -88,9 +94,14 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.click('input[name="clave"]');
     await page.type('input[name="clave"]', clave, { delay: 100 });
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(800);
 
-    // Solo clickear el boton (deja que onsubmit llame ejecuta_opcion naturalmente)
+    // Verificar campo 411 justo antes de submit
+    const codeBeforeSubmit = await page.evaluate(() => {
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+    });
+    console.log("Campo 411 antes de submit:", codeBeforeSubmit);
+
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
       page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
