@@ -61,6 +61,14 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   const cookieJar = getCookies.map((c: string) => c.split(";")[0]).join("; ");
   console.log("GET status:", getResp.status, "| cookies:", getCookies.map((c: string) => c.split("=")[0]).join(","));
 
+  // Ver si el campo 411 viene con valor en el HTML del GET
+  const getHtml = await getResp.text();
+  const match411 = getHtml.match(/name=.411.[^>]{0,100}/i) || getHtml.match(/id=.code.[^>]{0,100}/i);
+  console.log("Campo 411 en HTML GET:", match411?.[0] ?? "no encontrado");
+  // Ver inline scripts en el GET para buscar nonce F5
+  const inlineScripts = [...getHtml.matchAll(/<script[^>]*>([\s\S]{0,300}?)<\/script>/gi)].map(m => m[1].trim()).filter(Boolean);
+  console.log("Inline scripts GET:", inlineScripts.length, "| primeros 200c:", inlineScripts.map(s => s.substring(0, 100)).join(" | "));
+
   // Paso 2: POST formulario de login (igual que el browser)
   const formBody = new URLSearchParams({
     rut: rutDigitos,
