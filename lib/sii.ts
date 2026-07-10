@@ -43,22 +43,19 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     console.log("Playwright: navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "load",
-      timeout: 45000,
+      timeout: 60000,
     });
 
     console.log("Página cargada. Título:", await page.title(), "URL:", page.url());
 
-    await page.waitForSelector('input[name="rutcntr"]', { timeout: 15000 });
+    await page.waitForSelector('input[name="rutcntr"]', { timeout: 30000 });
     await page.fill('input[name="rutcntr"]', `${rutDigitos}-${dv}`);
     await page.fill('input[name="clave"]', clave);
 
-    const submitSel = 'input[type="submit"], button[type="submit"], input[name="btn_ingresar"], button[name="btn_ingresar"]';
-    await page.waitForSelector(submitSel, { timeout: 10000 });
-    console.log("Botón submit encontrado, haciendo click...");
-
+    console.log("Campos llenados. Enviando formulario con Enter...");
     await Promise.all([
-      page.waitForNavigation({ timeout: 30000, waitUntil: "load" }).catch(() => {}),
-      page.click(submitSel),
+      page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
+      page.press('input[name="clave"]', "Enter"),
     ]);
 
     console.log("Post-login URL:", page.url());
