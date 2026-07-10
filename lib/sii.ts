@@ -40,6 +40,19 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     });
     const page = await context.newPage();
 
+    // Capturar errores JS y consola del navegador
+    page.on('console', (msg: any) => {
+      if (msg.type() === 'error') console.log('Browser JS error:', msg.text());
+    });
+    page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
+
+    // Interceptar el POST real al CGI para ver qué campos envía
+    await page.route('**CAutInicio.cgi**', async (route: any) => {
+      const req = route.request();
+      console.log('POST interceptado a CGI. Body:', req.postData());
+      await route.continue();
+    });
+
     console.log("Playwright: navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "load",
@@ -50,17 +63,17 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
-    // Simular escritura real tecla por tecla para activar JS de SII
+    // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
-    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
+    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
     await page.press('input[name="rutcntr"]', 'Tab');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
 
     await page.click('input[name="clave"]');
-    await page.type('input[name="clave"]', clave, { delay: 80 });
-    await page.waitForTimeout(1000);
+    await page.type('input[name="clave"]', clave, { delay: 100 });
+    await page.waitForTimeout(800);
 
-    // Debug: ver estado de campos ocultos después de escritura
+    // Ver campos ocultos
     const debug = await page.evaluate(() => {
       const rut = (document.querySelector('input[name="rut"]') as HTMLInputElement)?.value;
       const dv = (document.querySelector('input[name="dv"]') as HTMLInputElement)?.value;
@@ -69,7 +82,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     });
     console.log("Debug campos antes de submit:", JSON.stringify(debug));
 
-    // Si rut/dv siguen vacíos, rellenarlos manualmente
+    // Rellenar manualmente si están vacíos
     await page.evaluate((args: { rutDigitos: string; dv: string }) => {
       const rutInput = document.querySelector('input[name="rut"]') as HTMLInputElement;
       const dvInput = document.querySelector('input[name="dv"]') as HTMLInputElement;
