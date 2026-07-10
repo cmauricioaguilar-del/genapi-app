@@ -89,15 +89,29 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     // Diagnosticar qué scripts cargó F5 y el valor inicial del campo 411
     const diag = await page.evaluate(() => {
       const scripts = Array.from(document.querySelectorAll('script[src]')).map((s: any) => s.src);
-      const inlines = Array.from(document.querySelectorAll('script:not([src])')).length;
+      const inlines = Array.from(document.querySelectorAll('script:not([src])')).map((s: any) =>
+        (s.textContent || '').substring(0, 400)
+      );
       const f = document.querySelector('input[id="code"], input[name="411"]') as HTMLInputElement | null;
-      const allInputs = Array.from(document.querySelectorAll('input')).map((i: any) => i.name + '=' + (i.value || '').substring(0, 30));
-      return { scripts, inlines, field411: f ? `val="${f.value}" type="${f.type}"` : 'NO ENCONTRADO', allInputs };
+      const webdriver = (navigator as any).webdriver;
+      return {
+        scripts,
+        inlines,
+        field411: f ? `val="${f.value}" type="${f.type}"` : 'NO ENCONTRADO',
+        webdriver,
+      };
     });
     console.log('Scripts externos:', JSON.stringify(diag.scripts));
-    console.log('Scripts inline:', diag.inlines);
+    console.log('navigator.webdriver:', diag.webdriver);
     console.log('Campo 411 inicial:', diag.field411);
-    console.log('Inputs:', JSON.stringify(diag.allInputs));
+    for (let i = 0; i < diag.inlines.length; i++) {
+      const s = diag.inlines[i];
+      if (s.includes('411') || s.includes('code') || s.includes('TS') || s.includes('challenge')) {
+        console.log(`Inline[${i}] (relevante):`, s.substring(0, 500));
+      } else {
+        console.log(`Inline[${i}]:`, s.substring(0, 80));
+      }
+    }
 
     // Esperar hasta 30s a que F5 pueble el campo
     try {
