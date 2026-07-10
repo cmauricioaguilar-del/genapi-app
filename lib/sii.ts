@@ -45,7 +45,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       viewport: { width: 1280, height: 720 },
     });
 
-    // Ocultar que es un navegador automatizado
     await context.addInitScript(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
       Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
@@ -57,13 +56,12 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
     page.on('requestfailed', (req: any) => {
-      console.log('Request fallido:', req.url().substring(0, 100), req.failure()?.errorText);
+      console.log('Request fallido:', req.url().substring(0, 120), req.failure()?.errorText);
     });
 
-    // Interceptar POST al CGI
     await page.route('**CAutInicio.cgi**', async (route: any) => {
       const req = route.request();
-      console.log('POST interceptado a CGI. Body:', req.postData());
+      console.log('POST interceptado. Body:', req.postData());
       await route.continue();
     });
 
@@ -74,36 +72,32 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     });
 
     console.log("Página cargada. Título:", await page.title());
-
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
-
-    // Debug form onsubmit e inline scripts
-    const formDebug = await page.evaluate(() => {
-      const form = document.querySelector('#myform') as HTMLFormElement;
-      const inlineScripts = Array.from(document.querySelectorAll('script:not([src])')).map((s: any) => s.textContent?.substring(0, 300)).join(' ||| ');
-      return {
-        onsubmit: form?.getAttribute('onsubmit'),
-        action: form?.getAttribute('action'),
-        inlineScripts: inlineScripts.substring(0, 800),
-      };
-    });
-    console.log("Form debug:", JSON.stringify(formDebug));
 
     // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
     await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
     await page.press('input[name="rutcntr"]', 'Tab');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(800);
 
     await page.click('input[name="clave"]');
     await page.type('input[name="clave"]', clave, { delay: 100 });
     await page.waitForTimeout(1000);
 
-    // Ver campo 411 antes de click
-    const codeVal = await page.evaluate(() => {
-      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+    // Llamar ejecuta_opcion() manualmente
+    const fnResult = await page.evaluate(() => {
+      try {
+        const fn = (window as any).ejecuta_opcion;
+        if (!fn) return { error: 'ejecuta_opcion no definida', code: '' };
+        const result = fn();
+        const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+        return { result: String(result), code };
+      } catch (e: any) {
+        const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+        return { error: e.message, code };
+      }
     });
-    console.log("Campo 411 antes de click:", codeVal);
+    console.log("ejecuta_opcion() result:", JSON.stringify(fnResult));
 
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
