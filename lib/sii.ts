@@ -74,6 +74,12 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     console.log("Página cargada. Título:", await page.title());
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
+    // Ver codigo fuente de ejecuta_opcion
+    const fnSource = await page.evaluate(() => {
+      return (window as any).ejecuta_opcion?.toString().substring(0, 600) || 'NOT FOUND';
+    });
+    console.log("ejecuta_opcion source:", fnSource);
+
     // Escribir tecla por tecla
     await page.click('input[name="rutcntr"]');
     await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
@@ -84,21 +90,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     await page.type('input[name="clave"]', clave, { delay: 100 });
     await page.waitForTimeout(1000);
 
-    // Llamar ejecuta_opcion() manualmente
-    const fnResult = await page.evaluate(() => {
-      try {
-        const fn = (window as any).ejecuta_opcion;
-        if (!fn) return { error: 'ejecuta_opcion no definida', code: '' };
-        const result = fn();
-        const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
-        return { result: String(result), code };
-      } catch (e: any) {
-        const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
-        return { error: e.message, code };
-      }
-    });
-    console.log("ejecuta_opcion() result:", JSON.stringify(fnResult));
-
+    // Solo clickear el boton (deja que onsubmit llame ejecuta_opcion naturalmente)
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
       page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
