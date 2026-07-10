@@ -26,7 +26,9 @@ function normalizarRut(rut: string): string {
 }
 
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const { chromium } = require("playwright");
+  const { chromium } = require("playwright-extra");
+  const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+  chromium.use(StealthPlugin());
 
   const browser = await chromium.launch({
     headless: true,
@@ -34,7 +36,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
     ],
   });
 
@@ -43,13 +44,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-419",
       viewport: { width: 1280, height: 720 },
-    });
-
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-      Object.defineProperty(navigator, 'languages', { get: () => ['es-419', 'es', 'en'] });
-      (window as any).chrome = { runtime: {} };
     });
 
     const page = await context.newPage();
@@ -65,40 +59,33 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       await route.continue();
     });
 
-    console.log("Playwright: navegando a login SII...");
+    console.log("Playwright stealth: navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "load",
       timeout: 60000,
     });
 
-    // Esperar 4 segundos por si F5 setea el campo 411 asincronamente
-    await page.waitForTimeout(4000);
+    // Esperar que F5 ejecute su fingerprinting y pueble el campo 411
+    await page.waitForTimeout(5000);
 
     const codeAfterLoad = await page.evaluate(() => {
-      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
     });
-    console.log("Campo 411 despues de 4s page load:", codeAfterLoad);
-
-    // Ver fuente de validaAut
-    const validaSource = await page.evaluate(() => {
-      return (window as any).validaAut?.toString().substring(0, 600) || 'NOT FOUND';
-    });
-    console.log("validaAut source:", validaSource);
+    console.log("Campo 411 despues de 5s page load:", codeAfterLoad);
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
     await page.click('input[name="rutcntr"]');
-    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 100 });
+    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
     await page.press('input[name="rutcntr"]', 'Tab');
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(500);
 
     await page.click('input[name="clave"]');
-    await page.type('input[name="clave"]', clave, { delay: 100 });
-    await page.waitForTimeout(800);
+    await page.type('input[name="clave"]', clave, { delay: 80 });
+    await page.waitForTimeout(500);
 
-    // Verificar campo 411 justo antes de submit
     const codeBeforeSubmit = await page.evaluate(() => {
-      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '';
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
     });
     console.log("Campo 411 antes de submit:", codeBeforeSubmit);
 
