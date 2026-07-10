@@ -50,32 +50,47 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
-    // Debug: ver qué inputs hay en el formulario
-    const formDebug = await page.evaluate(() => {
-      const inputs = Array.from(document.querySelectorAll('input')).map(i =>
-        `${i.type}|${i.name}|${i.id}|${i.className}`
-      );
-      return inputs.join(' /// ');
-    });
-    console.log("Inputs en página:", formDebug);
-
+    // Rellenar campo visible y disparar eventos para que JS de SII procese el RUT
     await page.fill('input[name="rutcntr"]', `${rutDigitos}-${dv}`);
+    await page.dispatchEvent('input[name="rutcntr"]', 'change');
+    await page.dispatchEvent('input[name="rutcntr"]', 'blur');
     await page.fill('input[name="clave"]', clave);
+    await page.dispatchEvent('input[name="clave"]', 'change');
 
-    console.log("Campos llenados. Enviando via JS form.submit()...");
-    await Promise.all([
-      page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
-      page.evaluate(() => {
-        const form = document.querySelector('form') as HTMLFormElement;
-        if (form) {
-          form.submit();
-        } else {
-          // fallback: click cualquier input submit o image
-          const btn = document.querySelector('input[type="submit"], input[type="image"], button[type="submit"]') as HTMLElement;
-          if (btn) btn.click();
-        }
-      }),
-    ]);
+    // Esperar que JS de SII rellene los campos ocultos
+    await page.waitForTimeout(1500);
+
+    // Rellenar campos ocultos directamente por si el JS no los llenó
+    await page.evaluate((args: { rutDigitos: string; dv: string }) => {
+      const rutInput = document.querySelector('input[name="rut"]') as HTMLInputElement;
+      const dvInput = document.querySelector('input[name="dv"]') as HTMLInputElement;
+      if (rutInput) rutInput.value = args.rutDigitos;
+      if (dvInput) dvInput.value = args.dv;
+    }, { rutDigitos, dv });
+
+    // Debug: ver estado de campos ocultos y botones disponibles
+    const debug = await page.evaluate(() => {
+      const rut = (document.querySelector('input[name="rut"]') as HTMLInputElement)?.value;
+      const dv = (document.querySelector('input[name="dv"]') as HTMLInputElement)?.value;
+      const code = (document.querySelector('input[id="code"]') as HTMLInputElement)?.value;
+      const buttons = Array.from(document.querySelectorAll('button, a[onclick], input[type="image"]')).map((b: any) =>
+        `${b.tagName}|${b.id}|${b.className}|${b.type || ""}|${(b.textContent || b.value || "").trim().substring(0, 30)}`
+      ).join(" /// ");
+      return { rut, dv, code, buttons };
+    });
+    console.log("Debug campos:", JSON.stringify(debug));
+
+    // Intentar hacer click en botón real si existe, si no usar form.submit()
+    const clicked = await page.evaluate(() => {
+      const btn = document.querySelector('button[type="submit"], button:not([type]), input[type="image"]') as HTMLElement;
+      if (btn) { btn.click(); return true; }
+      const form = document.querySelector('form') as HTMLFormElement;
+      if (form) { form.submit(); return true; }
+      return false;
+    });
+    console.log("Submit ejecutado:", clicked);
+
+    await page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {});
 
     console.log("Post-login URL:", page.url());
 
@@ -92,8 +107,7 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       const html = await page.content();
       const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
       const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
-      console.error("Login SII sin cookies. Error en página:", errMsg);
-      console.error("HTML snippet:", html.substring(0, 800));
+      console.error("Login SII sin cookies. Error:", errMsg);
       return null;
     }
 
