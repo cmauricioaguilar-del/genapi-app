@@ -63,20 +63,37 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       }
     });
 
-    // Detectar si algo setea el campo 411 desde el browser
+    // Observar cuándo el campo 411/code se agrega al DOM y si alguien setea su valor
     await context.addInitScript(() => {
-      document.addEventListener('DOMContentLoaded', () => {
-        const el = document.getElementById('code') as HTMLInputElement | null;
-        if (!el) { console.log('[411] campo NO encontrado'); return; }
-        const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+      const proto411 = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+      function watch411(el: HTMLInputElement) {
+        console.log('[411] campo añadido al DOM, valor inicial: "' + el.value + '"');
         Object.defineProperty(el, 'value', {
           set(v: string) {
-            console.log('[411] valor asignado:', String(v).substring(0, 80));
-            proto.set!.call(this, v);
+            console.log('[411] valor asignado: "' + String(v).substring(0, 120) + '"');
+            proto411.set!.call(this, v);
           },
-          get() { return proto.get!.call(this); },
+          get() { return proto411.get!.call(this); },
+          configurable: true,
         });
+      }
+      // Vigilar el body completo para detectar cuándo se inserta el campo
+      const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const node of Array.from(m.addedNodes)) {
+            const el = node as HTMLElement;
+            if (el.id === 'code' || (el as HTMLInputElement).name === '411') {
+              watch411(el as HTMLInputElement);
+            }
+            // Buscar dentro de nodos contenedores
+            const inside = (el.querySelectorAll) ? el.querySelectorAll('#code, [name="411"]') : [];
+            for (const child of Array.from(inside)) {
+              watch411(child as HTMLInputElement);
+            }
+          }
+        }
       });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
     });
 
     await page.route('**CAutInicio.cgi**', async (route: any) => {
@@ -89,6 +106,31 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       waitUntil: "networkidle",
       timeout: 60000,
     });
+
+    // Loguear scripts inline para encontrar cuál inserta el campo 411
+    const inlineScripts = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('script:not([src])')).map(s => ({
+        len: s.textContent?.length ?? 0,
+        content: s.textContent?.substring(0, 400) ?? '',
+      }));
+    });
+    for (const s of inlineScripts) {
+      if (s.content.includes('411') || s.content.includes('code') || s.content.includes('TS')) {
+        console.log(`[inline ${s.len}chars]:`, s.content.substring(0, 400));
+      }
+    }
+
+    // Loguear parte de AutAll.js buscando referencias al campo 411
+    const autAllRef = await page.evaluate(async () => {
+      try {
+        const r = await fetch('https://zeusr.sii.cl/AUT2000/js/AutAll.js');
+        const t = await r.text();
+        const idx = t.indexOf('411');
+        if (idx >= 0) return '[AutAll 411 ref]: ' + t.substring(Math.max(0, idx - 50), idx + 200);
+        return '[AutAll.js sin ref a 411, len=' + t.length + ']';
+      } catch (e: any) { return '[AutAll.js error]: ' + e.message; }
+    });
+    console.log(autAllRef);
 
     // Esperar hasta 10s por si algo puebla el campo asincronamente
     try {
