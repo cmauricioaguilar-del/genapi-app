@@ -25,146 +25,164 @@ function normalizarRut(rut: string): string {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
 }
 
-// Login en SII y obtener cookies de sesión
-// Acumula Set-Cookie de múltiples respuestas en un mapa (última gana)
-function mergeCookies(existing: Map<string, string>, setCookieHeaders: string[]): void {
-  for (const header of setCookieHeaders) {
-    const kv = header.split(";")[0].trim();
-    const eqIdx = kv.indexOf("=");
-    if (eqIdx === -1) continue;
-    const name = kv.slice(0, eqIdx);
-    existing.set(name, kv);
-  }
-}
-
-function cookieMapToHeader(map: Map<string, string>): string {
-  return Array.from(map.values()).join("; ");
-}
-
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const jar = new Map<string, string>();
-  const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  const { chromium } = require("playwright");
 
-  // Paso 1: GET página de login para obtener cookies F5 (TS*) y campos ocultos del form
-  const p1 = await fetch(
-    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
-    {
-      headers: {
-        "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-419,es;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-      },
-      redirect: "follow",
-    }
-  );
-  mergeCookies(jar, p1.headers.getSetCookie?.() ?? []);
-  const html1 = await p1.text();
-  console.log("Login paso1 status:", p1.status, "cookies:", jar.size);
-
-  // Extraer campos ocultos del formulario
-  const hiddenFields: Record<string, string> = {};
-  const inputRegex = /<input[^>]+type=["']hidden["'][^>]*>/gi;
-  const nameRegex = /name=["']([^"']+)["']/i;
-  const valueRegex = /value=["']([^"']*)["']/i;
-  let match;
-  while ((match = inputRegex.exec(html1)) !== null) {
-    const nameMatch = nameRegex.exec(match[0]);
-    const valueMatch = valueRegex.exec(match[0]);
-    if (nameMatch) hiddenFields[nameMatch[1]] = valueMatch ? valueMatch[1] : "";
+  const proxyUrl = process.env.PROXY_URL;
+  let proxyConfig: { server: string; username?: string; password?: string } | undefined;
+  if (proxyUrl) {
+    const u = new URL(proxyUrl);
+    proxyConfig = {
+      server: `${u.protocol}//${u.host}`,
+      username: u.username || undefined,
+      password: u.password || undefined,
+    };
+    console.log('Usando proxy:', `${u.protocol}//${u.host}`, 'user:', u.username || '(none)');
+  } else {
+    console.log('Sin proxy configurado (PROXY_URL no definida)');
   }
-  console.log("Campos ocultos encontrados:", Object.keys(hiddenFields).join(","));
 
-  // Paso 2: POST login con todos los campos del formulario
-  const formData = new URLSearchParams({
-    ...hiddenFields,
-    rutcntr: `${rutDigitos}-${dv}`,
-    rut: rutDigitos,
-    dv: dv,
-    clave: clave,
-    referencia: "https://www.sii.cl",
+  const browser = await chromium.launch({
+    headless: false,
+    proxy: proxyConfig,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   });
 
-  const p2 = await fetch(
-    "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": "https://zeusr.sii.cl//AUT2000/InicioAutenticacion/IngresoRutClave.html",
-        "Origin": "https://zeusr.sii.cl",
-        "User-Agent": UA,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "es-419,es;q=0.9",
-        "Cookie": cookieMapToHeader(jar),
-      },
-      body: formData.toString(),
-      redirect: "manual",
-    }
-  );
-  mergeCookies(jar, p2.headers.getSetCookie?.() ?? []);
-  console.log("Login paso2 status:", p2.status, "location:", p2.headers.get("location"), "cookies:", jar.size);
+  try {
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      locale: "es-419",
+      viewport: { width: 1280, height: 720 },
+    });
 
-  // Si es 302, seguir el redirect manualmente para capturar más cookies
-  if (p2.status === 302 || p2.status === 301) {
-    let location = p2.headers.get("location") ?? "";
-    if (location && !location.startsWith("http")) {
-      location = "https://zeusr.sii.cl" + location;
-    }
-    if (location) {
-      const p3 = await fetch(location, {
-        headers: {
-          "User-Agent": UA,
-          "Accept": "text/html,application/xhtml+xml,*/*",
-          "Cookie": cookieMapToHeader(jar),
-        },
-        redirect: "manual",
-      });
-      mergeCookies(jar, p3.headers.getSetCookie?.() ?? []);
-      console.log("Login paso3 status:", p3.status, "cookies:", jar.size);
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      (window as any).chrome = { runtime: {} };
+    });
 
-      // Puede haber otro redirect
-      if (p3.status === 302 || p3.status === 301) {
-        let loc2 = p3.headers.get("location") ?? "";
-        if (loc2 && !loc2.startsWith("http")) loc2 = "https://zeusr.sii.cl" + loc2;
-        if (loc2) {
-          const p4 = await fetch(loc2, {
-            headers: { "User-Agent": UA, "Accept": "text/html,*/*", "Cookie": cookieMapToHeader(jar) },
-            redirect: "manual",
-          });
-          mergeCookies(jar, p4.headers.getSetCookie?.() ?? []);
-          console.log("Login paso4 status:", p4.status, "cookies:", jar.size);
-        }
+    const page = await context.newPage();
+
+    page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
+    page.on('requestfailed', (req: any) => {
+      console.log('Request fallido:', req.url().substring(0, 120), req.failure()?.errorText);
+    });
+    page.on('console', (msg: any) => {
+      const text = msg.text();
+      if (text.includes('411') || text.includes('code')) {
+        console.log('Browser console:', text.substring(0, 200));
       }
+    });
+
+    // Observar cuándo el campo 411/code se agrega al DOM y si alguien setea su valor
+    await context.addInitScript(() => {
+      const proto411 = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+      function watch411(el: HTMLInputElement) {
+        console.log('[411] campo añadido al DOM, valor inicial: "' + el.value + '"');
+        Object.defineProperty(el, 'value', {
+          set(v: string) {
+            console.log('[411] valor asignado: "' + String(v).substring(0, 120) + '"');
+            proto411.set!.call(this, v);
+          },
+          get() { return proto411.get!.call(this); },
+          configurable: true,
+        });
+      }
+      // Vigilar el body completo para detectar cuándo se inserta el campo
+      const obs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const node of Array.from(m.addedNodes)) {
+            const el = node as HTMLElement;
+            if (el.id === 'code' || (el as HTMLInputElement).name === '411') {
+              watch411(el as HTMLInputElement);
+            }
+            // Buscar dentro de nodos contenedores
+            const inside = (el.querySelectorAll) ? el.querySelectorAll('#code, [name="411"]') : [];
+            for (const child of Array.from(inside)) {
+              watch411(child as HTMLInputElement);
+            }
+          }
+        }
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+    });
+
+    await page.route('**CAutInicio.cgi**', async (route: any) => {
+      console.log('POST interceptado. Body:', route.request().postData());
+      await route.continue();
+    });
+
+    console.log("Playwright Xvfb non-headless: navegando a login SII...");
+    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
+      waitUntil: "networkidle",
+      timeout: 60000,
+    });
+
+    // Esperar hasta 10s por si algo puebla el campo asincronamente
+    try {
+      await page.waitForFunction(() => {
+        const el = document.querySelector('input[id="code"]') as HTMLInputElement;
+        return el && el.value.length > 0;
+      }, { timeout: 10000 });
+      console.log('Campo 411 poblado!');
+    } catch (_) {
+      const val = await page.evaluate(() =>
+        (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)'
+      );
+      console.log('Campo 411 despues de espera:', val);
     }
-  } else {
-    // No hubo redirect — SII devolvió error
-    const html = await p2.text();
-    // Extraer mensaje de error del HTML
-    const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i)
-      ?? html.match(/<b>([\s\S]{0,200})<\/b>/i)
-      ?? html.match(/<p>([\s\S]{0,200})<\/p>/i);
-    const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : html.substring(0, 500);
-    console.error("Login SII error:", errMsg);
-    return null;
+
+    await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
+
+    await page.click('input[name="rutcntr"]');
+    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
+    await page.press('input[name="rutcntr"]', 'Tab');
+    await page.waitForTimeout(500);
+
+    await page.click('input[name="clave"]');
+    await page.type('input[name="clave"]', clave, { delay: 80 });
+    await page.waitForTimeout(1000);
+
+    const codeBeforeSubmit = await page.evaluate(() => {
+      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
+    });
+    console.log("Campo 411 antes de submit:", codeBeforeSubmit);
+
+    console.log("Clickeando botón #bt_ingresar...");
+    await Promise.all([
+      page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
+      page.click('#bt_ingresar'),
+    ]);
+
+    console.log("Post-login URL:", page.url());
+
+    const cookies = await context.cookies();
+    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join("; ");
+
+    const hasToken = cookies.some((c: any) => c.name === "TOKEN" || c.name === "CSESSIONID");
+    const hasLW = cookies.some((c: any) => c.name.startsWith("NETSCAPE_LIVEWIRE"));
+
+    console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW,
+      "keys=", cookies.map((c: any) => c.name).join(","));
+
+    if (!hasToken && !hasLW) {
+      const html = await page.content();
+      const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
+      const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
+      console.error("Login SII sin cookies. Error:", errMsg);
+      return null;
+    }
+
+    return cookieHeader;
+  } finally {
+    await browser.close();
   }
-
-  // Verificar que tenemos TOKEN o NETSCAPE_LIVEWIRE
-  const hasToken = jar.has("TOKEN") || jar.has("CSESSIONID");
-  const hasLW = jar.has("NETSCAPE_LIVEWIRE.rut") || [...jar.keys()].some(k => k.startsWith("NETSCAPE_LIVEWIRE"));
-  console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "keys=", [...jar.keys()].join(","));
-
-  if (!hasToken && !hasLW) {
-    console.error("Login SII: no se obtuvieron cookies de sesión");
-    return null;
-  }
-
-  return cookieMapToHeader(jar);
 }
 
-// Llamada directa a la API REST del portal RCV de SII
 async function llamarApiRCV(
   cookies: string,
   rutDigitos: string,
@@ -172,7 +190,6 @@ async function llamarApiRCV(
   periodo: string,
   operacion: "COMPRA" | "VENTA"
 ): Promise<any[]> {
-  // El conversationId es el valor del cookie TOKEN o CSESSIONID
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -217,12 +234,10 @@ async function llamarApiRCV(
   const json = await resp.json();
   console.log(`getResumen ${operacion} respuesta:`, JSON.stringify(json).substring(0, 300));
 
-  // Extraer documentos del resumen
   const tipos = json?.data?.listaResumenDte ?? json?.data?.listaDte ?? json?.data ?? [];
   return Array.isArray(tipos) ? tipos : [];
 }
 
-// Obtener detalle de documentos por tipo
 async function llamarApiDetalle(
   cookies: string,
   rutDigitos: string,
@@ -316,7 +331,6 @@ export async function extraerRCV(
   const dv = rutNormalizado.slice(-1);
 
   try {
-    // 1. Login y obtener cookies de sesión
     console.log("Iniciando login SII...");
     const cookies = await loginSII(rutDigitos, dv, clave);
     if (!cookies) {
@@ -324,13 +338,11 @@ export async function extraerRCV(
     }
     console.log("Login exitoso. Cookies obtenidas.");
 
-    // 2. Obtener resumen de compras y ventas
     const [resumenCompras, resumenVentas] = await Promise.all([
       llamarApiRCV(cookies, rutDigitos, dv, period, "COMPRA"),
       llamarApiRCV(cookies, rutDigitos, dv, period, "VENTA"),
     ]);
 
-    // 3. Obtener detalle por cada tipo de documento
     const comprasPromises = resumenCompras.map((tipo: any) =>
       llamarApiDetalle(cookies, rutDigitos, dv, period, "COMPRA", tipo.tipoDoc ?? tipo.codDoc ?? tipo.tipo)
     );
