@@ -58,79 +58,51 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     });
     page.on('console', (msg: any) => {
       const text = msg.text();
-      if (text.includes('411') || text.includes('TS') || text.includes('code')) {
+      if (text.includes('411') || text.includes('code')) {
         console.log('Browser console:', text.substring(0, 200));
       }
     });
 
-    // MutationObserver para detectar si algo setea el campo 411
+    // Detectar si algo setea el campo 411 desde el browser
     await context.addInitScript(() => {
       document.addEventListener('DOMContentLoaded', () => {
-        const el = document.getElementById('code');
-        if (el) {
-          const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
-          Object.defineProperty(el, 'value', {
-            set(v: string) {
-              console.log('[411-setter] valor asignado:', v.substring(0, 80));
-              proto.set!.call(this, v);
-            },
-            get() { return proto.get!.call(this); },
-          });
-        } else {
-          console.log('[411-debug] campo code/411 NO encontrado en DOM');
-        }
+        const el = document.getElementById('code') as HTMLInputElement | null;
+        if (!el) { console.log('[411] campo NO encontrado'); return; }
+        const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+        Object.defineProperty(el, 'value', {
+          set(v: string) {
+            console.log('[411] valor asignado:', String(v).substring(0, 80));
+            proto.set!.call(this, v);
+          },
+          get() { return proto.get!.call(this); },
+        });
       });
     });
 
-    // Interceptar scripts de F5 para diagnóstico
-    await page.route('**/*.js', async (route: any) => {
-      const response = await route.fetch();
-      const url = route.request().url();
-      const body = await response.text();
-      if (body.includes('"411"') || body.includes("'411'") || body.includes('getElementById("code")') || body.includes("getElementById('code')")) {
-        console.log('Script F5 con ref a 411:', url.substring(0, 150));
-      }
-      await route.fulfill({ response });
-    });
-
     await page.route('**CAutInicio.cgi**', async (route: any) => {
-      const req = route.request();
-      console.log('POST interceptado. Body:', req.postData());
+      console.log('POST interceptado. Body:', route.request().postData());
       await route.continue();
     });
 
     console.log("Playwright Xvfb non-headless: navegando a login SII...");
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
-      waitUntil: "load",
+      waitUntil: "networkidle",
       timeout: 60000,
     });
 
-    // Diagnóstico post-carga
-    const htmlDebug = await page.evaluate(() => {
-      const scripts = Array.from(document.querySelectorAll('script'))
-        .map((s: any) => s.src || `(inline ${s.textContent?.length ?? 0} chars)`);
-      const fields = Array.from(document.querySelectorAll('input'))
-        .map((i: any) => `${i.name}(${i.type})=${(i.value ?? '').substring(0, 30)}`);
-      return { scripts, fields };
-    });
-    console.log('Scripts cargados:', JSON.stringify(htmlDebug.scripts));
-    console.log('Campos del form:', JSON.stringify(htmlDebug.fields));
-
-    // Esperar hasta 12s por si F5 puebla el campo asincronamente
+    // Esperar hasta 10s por si algo puebla el campo asincronamente
     try {
       await page.waitForFunction(() => {
         const el = document.querySelector('input[id="code"]') as HTMLInputElement;
         return el && el.value.length > 0;
-      }, { timeout: 12000 });
-      console.log('Campo 411 poblado exitosamente!');
+      }, { timeout: 10000 });
+      console.log('Campo 411 poblado!');
     } catch (_) {
-      console.log('Campo 411 NO poblado despues de 12s (F5 no ejecuto el challenge)');
+      const val = await page.evaluate(() =>
+        (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)'
+      );
+      console.log('Campo 411 despues de espera:', val);
     }
-
-    const codeAfterLoad = await page.evaluate(() => {
-      return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
-    });
-    console.log("Campo 411 final:", codeAfterLoad);
 
     await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
 
@@ -147,13 +119,6 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
       return (document.querySelector('input[id="code"]') as HTMLInputElement)?.value || '(vacío)';
     });
     console.log("Campo 411 antes de submit:", codeBeforeSubmit);
-
-    // IP publica del contenedor (para diagnóstico de reputación F5)
-    try {
-      const ipResp = await fetch('https://api.ipify.org?format=json');
-      const ipJson = await ipResp.json();
-      console.log('IP publica Railway:', ipJson.ip);
-    } catch (_) {}
 
     console.log("Clickeando botón #bt_ingresar...");
     await Promise.all([
