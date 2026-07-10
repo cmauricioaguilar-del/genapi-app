@@ -25,152 +25,101 @@ function normalizarRut(rut: string): string {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
 }
 
+function formatearRutConPuntos(rutDigitos: string): string {
+  // 76129731 -> 76.129.731
+  const len = rutDigitos.length;
+  if (len <= 3) return rutDigitos;
+  if (len <= 6) return rutDigitos.slice(0, len - 3) + "." + rutDigitos.slice(len - 3);
+  return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
+}
+
+function getDispatcher(proxyUrl?: string): any {
+  if (!proxyUrl) return undefined;
+  const { ProxyAgent } = require("undici");
+  return new ProxyAgent(proxyUrl);
+}
+
+async function siFetch(url: string, options: any = {}, dispatcher?: any): Promise<Response> {
+  const { fetch: undiciFetch } = require("undici");
+  return undiciFetch(url, { ...options, dispatcher });
+}
+
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
-  const { chromium } = require("playwright");
-
   const proxyUrl = process.env.PROXY_URL;
-  let proxyConfig: { server: string; username?: string; password?: string } | undefined;
-  if (proxyUrl) {
-    const u = new URL(proxyUrl);
-    proxyConfig = {
-      server: `${u.protocol}//${u.host}`,
-      username: u.username || undefined,
-      password: u.password || undefined,
-    };
-    console.log('Usando proxy:', `${u.protocol}//${u.host}`, 'user:', u.username || '(none)');
-  } else {
-    console.log('Sin proxy configurado (PROXY_URL no definida)');
+  const dispatcher = getDispatcher(proxyUrl);
+
+  const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
+
+  console.log("HTTP login SII (sin browser)", proxyUrl ? `proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}` : "sin proxy");
+  console.log("RUT:", rutConPuntos);
+
+  const baseHeaders: Record<string, string> = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Accept-Language": "es-CL,es;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  };
+
+  // Paso 1: GET página de login para obtener cookies F5
+  const getResp = await siFetch(
+    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
+    { headers: baseHeaders },
+    dispatcher
+  );
+
+  const getCookies: string[] = getResp.headers.getSetCookie
+    ? getResp.headers.getSetCookie()
+    : [];
+  const cookieJar = getCookies.map((c: string) => c.split(";")[0]).join("; ");
+  console.log("GET status:", getResp.status, "| cookies:", getCookies.map((c: string) => c.split("=")[0]).join(","));
+
+  // Paso 2: POST formulario de login (igual que el browser)
+  const formBody = new URLSearchParams({
+    rut: rutDigitos,
+    dv,
+    referencia: "http://www.sii.cl",
+    "411": "",
+    rutcntr: rutConPuntos,
+    clave,
+  }).toString();
+
+  const postResp = await siFetch(
+    "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi",
+    {
+      method: "POST",
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://zeusr.sii.cl",
+        "Referer": "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
+        "Cookie": cookieJar,
+      },
+      body: formBody,
+      redirect: "follow",
+    },
+    dispatcher
+  );
+
+  const postCookies: string[] = postResp.headers.getSetCookie
+    ? postResp.headers.getSetCookie()
+    : [];
+  const allCookies = [...getCookies, ...postCookies].map((c: string) => c.split(";")[0]);
+  const finalCookieStr = allCookies.join("; ");
+
+  const hasToken = allCookies.some((c: string) => c.startsWith("TOKEN=") || c.startsWith("CSESSIONID="));
+  const hasLW = allCookies.some((c: string) => c.startsWith("NETSCAPE_LIVEWIRE"));
+
+  console.log("POST status:", postResp.status, "| final URL:", postResp.url);
+  console.log("Cookies: TOKEN=", hasToken, "LIVEWIRE=", hasLW, "| nombres:", allCookies.map((c: string) => c.split("=")[0]).join(","));
+
+  if (!hasToken && !hasLW) {
+    const html = await postResp.text();
+    const texto = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    console.error("Login fallido. Respuesta SII:", texto.substring(0, 600));
+    return null;
   }
 
-  const browser = await chromium.launch({
-    headless: false,
-    proxy: proxyConfig,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  });
-
-  try {
-    const context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-      locale: "es-419",
-      viewport: { width: 1280, height: 720 },
-    });
-
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      (window as any).chrome = { runtime: {}, app: {}, csi: () => {}, loadTimes: () => {} };
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-      Object.defineProperty(navigator, 'languages', { get: () => ['es-CL', 'es', 'en'] });
-    });
-
-    const page = await context.newPage();
-
-    page.on('pageerror', (err: any) => console.log('Page JS exception:', err.message));
-    page.on('requestfailed', (req: any) => {
-      console.log('Request fallido:', req.url().substring(0, 120), req.failure()?.errorText);
-    });
-
-    await page.route('**CAutInicio.cgi**', async (route: any) => {
-      console.log('POST body:', route.request().postData());
-      await route.continue();
-    });
-
-    console.log("Navegando a login SII...");
-    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
-      waitUntil: "networkidle",
-      timeout: 60000,
-    });
-
-    // Diagnosticar qué scripts cargó F5 y el valor inicial del campo 411
-    const diag = await page.evaluate(() => {
-      const scripts = Array.from(document.querySelectorAll('script[src]')).map((s: any) => s.src);
-      const inlines = Array.from(document.querySelectorAll('script:not([src])')).map((s: any) =>
-        (s.textContent || '').substring(0, 400)
-      );
-      const f = document.querySelector('input[id="code"], input[name="411"]') as HTMLInputElement | null;
-      const webdriver = (navigator as any).webdriver;
-      return {
-        scripts,
-        inlines,
-        field411: f ? `val="${f.value}" type="${f.type}"` : 'NO ENCONTRADO',
-        webdriver,
-      };
-    });
-    console.log('Scripts externos:', JSON.stringify(diag.scripts));
-    console.log('navigator.webdriver:', diag.webdriver);
-    console.log('Campo 411 inicial:', diag.field411);
-    // Buscar getElementById en AutAll.js para ver qué campos manipula
-    const autAllDiag = await page.evaluate(async () => {
-      try {
-        const r = await fetch('https://zeusr.sii.cl/AUT2000/js/AutAll.js');
-        const text = await r.text();
-        const hits: string[] = [];
-        const patterns = ['getElementById', 'getElement', '411', 'code', 'rut', 'clave', 'submit'];
-        for (const pat of patterns) {
-          const idx = text.indexOf(pat);
-          if (idx >= 0) hits.push(`[${pat}]: ...${text.substring(Math.max(0,idx-20), idx+100)}...`);
-        }
-        return { len: text.length, hits };
-      } catch (e: any) { return { len: 0, hits: ['error: ' + (e as any).message] }; }
-    });
-    console.log('AutAll.js len:', autAllDiag.len);
-    console.log('AutAll.js hits:', JSON.stringify(autAllDiag.hits));
-
-    // Esperar hasta 30s a que F5 pueble el campo
-    try {
-      await page.waitForFunction(() => {
-        const el = document.querySelector('input[id="code"], input[name="411"]') as HTMLInputElement;
-        return el && el.value.length > 0;
-      }, { timeout: 30000 });
-      const val = await page.evaluate(() => (document.querySelector('input[id="code"]') as HTMLInputElement)?.value);
-      console.log('Campo 411 poblado:', val?.substring(0, 50));
-    } catch (_) {
-      console.log('Campo 411 sigue vacío después de 30s');
-    }
-
-    await page.waitForSelector('input[name="rutcntr"]', { state: "visible", timeout: 30000 });
-    await page.click('input[name="rutcntr"]');
-    await page.type('input[name="rutcntr"]', `${rutDigitos}-${dv}`, { delay: 80 });
-    await page.press('input[name="rutcntr"]', 'Tab');
-    await page.waitForTimeout(500);
-    await page.click('input[name="clave"]');
-    await page.type('input[name="clave"]', clave, { delay: 80 });
-    await page.waitForTimeout(1000);
-
-    console.log("Clickeando #bt_ingresar...");
-    await Promise.all([
-      page.waitForNavigation({ timeout: 60000, waitUntil: "load" }).catch(() => {}),
-      page.click('#bt_ingresar'),
-    ]);
-
-    console.log("Post-login URL:", page.url());
-    const cookies = await context.cookies();
-    const cookieHeader = cookies.map((c: any) => `${c.name}=${c.value}`).join("; ");
-    const hasToken = cookies.some((c: any) => c.name === "TOKEN" || c.name === "CSESSIONID");
-    const hasLW = cookies.some((c: any) => c.name.startsWith("NETSCAPE_LIVEWIRE"));
-    console.log("Login resultado: TOKEN=", hasToken, "LIVEWIRE=", hasLW,
-      "keys=", cookies.map((c: any) => c.name).join(","));
-
-    if (!hasToken && !hasLW) {
-      const html = await page.content();
-      // Extraer texto visible (sin tags) para ver el mensaje de error real
-      const texto = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      console.log('Texto post-login:', texto.substring(0, 1500));
-      const errMatch = html.match(/class="[^"]*error[^"]*"[^>]*>([\s\S]{0,300})/i);
-      const errMsg = errMatch ? errMatch[1].replace(/<[^>]+>/g, "").trim() : "Sin cookies de sesión";
-      console.error("Login SII sin cookies. Error:", errMsg);
-      return null;
-    }
-
-    return cookieHeader;
-  } finally {
-    await browser.close();
-  }
+  console.log("Login exitoso. Cookies obtenidas.");
+  return finalCookieStr;
 }
 
 async function llamarApiRCV(
@@ -180,6 +129,9 @@ async function llamarApiRCV(
   periodo: string,
   operacion: "COMPRA" | "VENTA"
 ): Promise<any[]> {
+  const proxyUrl = process.env.PROXY_URL;
+  const dispatcher = getDispatcher(proxyUrl);
+
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -200,7 +152,7 @@ async function llamarApiRCV(
     },
   };
 
-  const resp = await fetch(
+  const resp = await siFetch(
     "https://www4.sii.cl/consdcvinternetui/services/data/facadeService/getResumen",
     {
       method: "POST",
@@ -209,11 +161,12 @@ async function llamarApiRCV(
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www4.sii.cl",
         "Referer": "https://www4.sii.cl/consdcvinternetui/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         "Cookie": cookies,
       },
       body: JSON.stringify(payload),
-    }
+    },
+    dispatcher
   );
 
   if (!resp.ok) {
@@ -222,7 +175,7 @@ async function llamarApiRCV(
   }
 
   const json = await resp.json();
-  console.log(`getResumen ${operacion} respuesta:`, JSON.stringify(json).substring(0, 300));
+  console.log(`getResumen ${operacion}:`, JSON.stringify(json).substring(0, 300));
 
   const tipos = json?.data?.listaResumenDte ?? json?.data?.listaDte ?? json?.data ?? [];
   return Array.isArray(tipos) ? tipos : [];
@@ -236,6 +189,9 @@ async function llamarApiDetalle(
   operacion: "COMPRA" | "VENTA",
   tipoDoc: string
 ): Promise<DocumentoSII[]> {
+  const proxyUrl = process.env.PROXY_URL;
+  const dispatcher = getDispatcher(proxyUrl);
+
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -257,7 +213,7 @@ async function llamarApiDetalle(
     },
   };
 
-  const resp = await fetch(
+  const resp = await siFetch(
     "https://www4.sii.cl/consdcvinternetui/services/data/facadeService/getDetalleDocumentos",
     {
       method: "POST",
@@ -266,11 +222,12 @@ async function llamarApiDetalle(
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www4.sii.cl",
         "Referer": "https://www4.sii.cl/consdcvinternetui/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         "Cookie": cookies,
       },
       body: JSON.stringify(payload),
-    }
+    },
+    dispatcher
   );
 
   if (!resp.ok) {
@@ -326,7 +283,6 @@ export async function extraerRCV(
     if (!cookies) {
       return { ok: false, error: "No se pudo autenticar en el SII. Verifica las credenciales." };
     }
-    console.log("Login exitoso. Cookies obtenidas.");
 
     const [resumenCompras, resumenVentas] = await Promise.all([
       llamarApiRCV(cookies, rutDigitos, dv, period, "COMPRA"),
