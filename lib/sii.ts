@@ -40,16 +40,12 @@ async function siFetch(url: string, options: any = {}): Promise<Response> {
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
-  console.log("HTTP login SII (sin browser, fetch directo)");
-  console.log("RUT:", rutConPuntos);
-
   const baseHeaders: Record<string, string> = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "Accept-Language": "es-CL,es;q=0.9,en;q=0.8",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
   };
 
-  // Paso 1: GET página de login para obtener cookies F5
   const getResp = await siFetch(
     "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html",
     { headers: baseHeaders }
@@ -59,15 +55,8 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     ? getResp.headers.getSetCookie()
     : [];
   const cookieJar = getCookies.map((c: string) => c.split(";")[0]).join("; ");
-  console.log("GET status:", getResp.status, "| cookies:", getCookies.map((c: string) => c.split("=")[0]).join(","));
 
-  // Ver si el campo 411 viene con valor en el HTML del GET
-  const getHtml = await getResp.text();
-  const match411 = getHtml.match(/name=.411.[^>]{0,100}/i) || getHtml.match(/id=.code.[^>]{0,100}/i);
-  console.log("Campo 411 en HTML GET:", match411?.[0] ?? "no encontrado");
-  // Ver inline scripts en el GET para buscar nonce F5
-  const inlineScripts = [...getHtml.matchAll(/<script[^>]*>([\s\S]{0,300}?)<\/script>/gi)].map(m => m[1].trim()).filter(Boolean);
-  console.log("Inline scripts GET:", inlineScripts.length, "| primeros 200c:", inlineScripts.map(s => s.substring(0, 100)).join(" | "));
+  await getResp.text();
 
   const formBody = new URLSearchParams({
     rut: rutDigitos,
@@ -104,18 +93,14 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
     const hasToken = allCookies.some((c: string) => c.startsWith("TOKEN=") || c.startsWith("CSESSIONID="));
     const hasLW = allCookies.some((c: string) => c.startsWith("NETSCAPE_LIVEWIRE"));
 
-    console.log(`${ep.url}: status=${postResp.status} TOKEN=${hasToken} LIVEWIRE=${hasLW} cookies=${allCookies.map((c: string) => c.split("=")[0]).join(",")}`);
-
     if (hasToken || hasLW) {
-      console.log("Login exitoso vía", ep.url);
       return finalCookieStr;
     }
 
-    const texto = (await postResp.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    console.log("Respuesta:", texto.substring(0, 300));
+    await postResp.text();
   }
 
-  console.error("Login fallido en todos los endpoints.");
+  console.error("SII login failed for RUT", rutDigitos);
   return null;
 }
 
@@ -168,7 +153,6 @@ async function llamarApiRCV(
   }
 
   const json = await resp.json();
-  console.log(`getResumen ${operacion}:`, JSON.stringify(json).substring(0, 300));
 
   const tipos = json?.data?.listaResumenDte ?? json?.data?.listaDte ?? json?.data ?? [];
   return Array.isArray(tipos) ? tipos : [];
@@ -226,7 +210,6 @@ async function llamarApiDetalle(
   }
 
   const json = await resp.json();
-  console.log(`getDetalle ${operacion} OK:`, JSON.stringify(json).substring(0, 400));
   return parsearDetalle(json);
 }
 
@@ -264,7 +247,6 @@ export async function extraerRCV(
   const dv = rutNormalizado.slice(-1);
 
   try {
-    console.log("Iniciando login SII...");
     const cookies = await loginSII(rutDigitos, dv, clave);
     if (!cookies) {
       return { ok: false, error: "No se pudo autenticar en el SII. Verifica las credenciales." };
@@ -290,7 +272,6 @@ export async function extraerRCV(
     const compras = comprasListas.flat();
     const ventas = ventasListas.flat();
 
-    console.log(`Extracción completa: ${compras.length} compras, ${ventas.length} ventas`);
 
     siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
       headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/" },

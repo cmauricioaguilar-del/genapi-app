@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { autenticarToken, registrarUso } from "@/lib/apiAuth";
+import { obtenerOExtraerCompras } from "@/lib/extraccion";
 
 export const dynamic = "force-dynamic";
 
@@ -17,8 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ peri
 
   await registrarUso(empresa.id, "compras", period, req.headers.get("x-forwarded-for") ?? undefined);
 
-  const { extraerRCV } = await import("@/lib/sii");
-  const resultado = await extraerRCV(empresa.siiRut, empresa.siiClaveEnc, period);
+  const resultado = await obtenerOExtraerCompras(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
 
   if (!resultado.ok) {
     return NextResponse.json({ error: resultado.error }, { status: 502 });
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ peri
     empresa: empresa.nombre,
     rut: empresa.siiRut,
     period,
-    total: resultado.compras?.length ?? 0,
-    data: resultado.compras,
+    total: resultado.data.length,
+    data: resultado.data,
   });
 }

@@ -26,8 +26,8 @@ model Empresa {
   nombre        String
   rut           String
   siiRut        String
-  siiClaveEnc   String    // AES-256-GCM cifrado
-  apiToken      String    @unique @default(uuid()) // token que el cliente usa para llamar la API
+  siiClaveEnc   String
+  apiToken      String    @unique @default(uuid())
   activa        Boolean   @default(true)
   creadoEn      DateTime  @default(now())
   actualizadoEn DateTime  @updatedAt
@@ -37,28 +37,81 @@ model Empresa {
 
   extracciones  Extraccion[]
   logsUso       LogUso[]
+  ventas        Venta[]
+  compras       Compra[]
 
   @@map("empresas")
 }
 
 model Extraccion {
-  id         String   @id @default(cuid())
-  period     String   // YYYYMM
-  modulo     String   // ventas | compras | f29
-  estado     String   @default("PENDIENTE") // PENDIENTE | PROCESANDO | COMPLETADA | ERROR
-  resultado  Json?    // datos extraídos del SII
-  error      String?
-  creadoEn   DateTime @default(now())
+  id            String   @id @default(uuid())
+  period        String
+  modulo        String   // ventas | compras | f29 | honorarios
+  estado        String   @default("PENDING") // PENDING | RUNNING | SUCCESS | FAILED
+  filas         Int?
+  errorMsg      String?
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
 
   empresaId  String
   empresa    Empresa  @relation(fields: [empresaId], references: [id])
+  ventas     Venta[]
+  compras    Compra[]
 
   @@map("extracciones")
 }
 
+model Venta {
+  id             Int      @id @default(autoincrement())
+  period         String
+  docType        String
+  docNumber      String
+  rutEmisor      String
+  nombreEmisor   String
+  rutReceptor    String
+  nombreReceptor String
+  fechaEmision   String
+  montoNeto      Int      @default(0)
+  montoIva       Int      @default(0)
+  montoTotal     Int      @default(0)
+  montoExento    Int      @default(0)
+  extractedAt    DateTime @default(now())
+
+  empresaId    String
+  extraccionId String
+  empresa      Empresa    @relation(fields: [empresaId], references: [id])
+  extraccion   Extraccion @relation(fields: [extraccionId], references: [id])
+
+  @@map("ventas")
+}
+
+model Compra {
+  id             Int      @id @default(autoincrement())
+  period         String
+  docType        String
+  docNumber      String
+  rutEmisor      String
+  nombreEmisor   String
+  rutReceptor    String
+  nombreReceptor String
+  fechaEmision   String
+  montoNeto      Int      @default(0)
+  montoIva       Int      @default(0)
+  montoTotal     Int      @default(0)
+  montoExento    Int      @default(0)
+  extractedAt    DateTime @default(now())
+
+  empresaId    String
+  extraccionId String
+  empresa      Empresa    @relation(fields: [empresaId], references: [id])
+  extraccion   Extraccion @relation(fields: [extraccionId], references: [id])
+
+  @@map("compras")
+}
+
 model LogUso {
   id        String   @id @default(cuid())
-  endpoint  String   // ventas | compras | f29 | status
+  endpoint  String
   period    String?
   ip        String?
   creadoEn  DateTime @default(now())
