@@ -232,27 +232,22 @@ async function llamarApiDetalle(
 
 function parsearDetalle(json: any): DocumentoSII[] {
   const docs: DocumentoSII[] = [];
-  const lista =
-    json?.data?.listaDte ??
-    json?.data?.listaDetalleDte ??
-    json?.data?.detalle ??
-    json?.data ?? [];
-
-  if (!Array.isArray(lista)) return docs;
+  const lista = Array.isArray(json?.data) ? json.data : [];
 
   for (const r of lista) {
+    const rutDoc = r.detRutDoc ? `${r.detRutDoc}-${r.detDvDoc ?? ""}` : "";
     docs.push({
-      doc_type: String(r.tipoDoc ?? r.codDoc ?? r.tipo ?? r.tipoDte ?? ""),
-      doc_number: String(r.folio ?? r.nroDoc ?? r.numero ?? ""),
-      rut_emisor: r.rutEmisor ?? r.rutDoc ?? "",
-      nombre_emisor: r.razonSocial ?? r.nombreEmisor ?? r.rznSoc ?? "",
+      doc_type: String(r.detTipoDoc ?? r.tipoDoc ?? r.codDoc ?? ""),
+      doc_number: String(r.detNroDoc ?? r.folio ?? r.nroDoc ?? ""),
+      rut_emisor: rutDoc || r.rutEmisor || "",
+      nombre_emisor: r.detRznSoc ?? r.razonSocial ?? "",
       rut_receptor: r.rutReceptor ?? "",
       nombre_receptor: r.nombreReceptor ?? "",
-      fecha_emision: r.fechaDoc ?? r.fecha ?? r.fchDoc ?? "",
-      monto_neto: Number(r.montoNeto ?? r.neto ?? r.mntNeto ?? 0),
-      monto_iva: Number(r.montoIva ?? r.iva ?? r.mntIva ?? 0),
-      monto_total: Number(r.montoTotal ?? r.total ?? r.mntTotal ?? 0),
-      monto_exento: Number(r.montoExento ?? r.exento ?? r.mntExe ?? 0),
+      fecha_emision: r.detFchDoc ?? r.fechaDoc ?? "",
+      monto_neto: Number(r.detMntNeto ?? r.montoNeto ?? 0),
+      monto_iva: Number(r.detMntIVA ?? r.detMntIva ?? r.montoIva ?? 0),
+      monto_total: Number(r.detMntTotal ?? r.montoTotal ?? 0),
+      monto_exento: Number(r.detMntExe ?? r.montoExento ?? 0),
     });
   }
   return docs;
