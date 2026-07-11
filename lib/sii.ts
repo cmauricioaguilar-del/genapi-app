@@ -326,13 +326,7 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
       });
       if (!resp.ok) { console.error(`[honorarios] HTTP ${resp.status} mes=${mes}`); continue; }
       const html = await resp.text();
-      // Loguear fragmento con la tabla de datos
-      const tableIdx = html.search(/<table/i);
-      const tableSnippet = tableIdx >= 0 ? html.slice(tableIdx, tableIdx + 800).replace(/\s+/g, " ") : "NO-TABLE";
-      console.log(`[honorarios] mes=${mes} html_len=${html.length} table=${tableSnippet}`);
-      const found = parsearHonorariosHTML(html, anio, mes);
-      console.log(`[honorarios] mes=${mes} registros=${found.length}`);
-      honorarios.push(...found);
+      honorarios.push(...parsearHonorariosHTML(html, anio, mes));
     }
 
     return { ok: true, honorarios };
@@ -344,10 +338,23 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
 
 function parsearHonorariosHTML(html: string, anio: string, mes: string): HonorarioSII[] {
   const docs: HonorarioSII[] = [];
+
+  // La página usa document.write() para generar el contenido dinámicamente.
+  // Extraemos todos los strings de document.write y los concatenamos para obtener el HTML real.
+  const writeRe = /document\.write\('([\s\S]*?)'\)/g;
+  let writeMatch: RegExpExecArray | null;
+  let virtualHtml = "";
+  while ((writeMatch = writeRe.exec(html)) !== null) {
+    // Desescapar secuencias JavaScript: \/ → /
+    virtualHtml += writeMatch[1].replace(/\\\//g, "/");
+  }
+
+  if (!virtualHtml) return docs;
+
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rowMatch: RegExpExecArray | null;
 
-  while ((rowMatch = rowRegex.exec(html)) !== null) {
+  while ((rowMatch = rowRegex.exec(virtualHtml)) !== null) {
     const cells: string[] = [];
     const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
     let cellMatch: RegExpExecArray | null;
@@ -356,9 +363,7 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
     }
     if (cells.length < 8) continue;
 
-    // La tabla SII tiene: Ver | N° | Estado | Fecha | Rut | Nombre | Soc.Prof. | Brutos | Retenido | Pagado | Observar
-    // cells[0]=Ver(link), cells[1]=N°folio, cells[2]=Estado, cells[3]=Fecha,
-    // cells[4]=Rut, cells[5]=Nombre, cells[6]=Soc.Prof., cells[7]=Brutos, cells[8]=Retenido, cells[9]=Pagado
+    // Columnas: Ver(img) | N°folio | Estado | Fecha | Rut | Nombre | Soc.Prof. | Brutos | Retenido | Pagado | Observar
     const folio = cells[1].replace(/\./g, "").replace(/,/g, "").trim();
     if (!/^\d+$/.test(folio)) continue;
     docs.push({
