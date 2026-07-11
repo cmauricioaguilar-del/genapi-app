@@ -356,35 +356,30 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
   while ((inlineMatch = inlineRe.exec(html)) !== null) {
     if (inlineMatch[1].trim().length > 50) lastInline = inlineMatch[1].trim();
   }
-  // Buscar el objeto xml_values que contiene los datos de boletas
-  const xmlValIdx = html.indexOf("xml_values");
-  const xmlValSnippet = xmlValIdx >= 0 ? html.slice(Math.max(0, xmlValIdx - 100), xmlValIdx + 1500).replace(/\s+/g, " ") : "NOT-FOUND";
-  console.log(`[honorarios-parse] mes=${mes} xml_values_at=${xmlValIdx} ctx=${xmlValSnippet}`);
-  if (!virtualHtml) return docs;
+  // La data viene en arr_informe_mensual['campo_N'] y CantidadFilas=N
+  const cantMatch = html.match(/CantidadFilas\s*=\s*(\d+)/);
+  const cant = cantMatch ? parseInt(cantMatch[1], 10) : 0;
+  if (cant === 0) return docs;
 
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch: RegExpExecArray | null;
+  const getVal = (key: string): string => {
+    const m = html.match(new RegExp(`arr_informe_mensual\\['${key}'\\]\\s*=\\s*(?:formatMiles\\("([^"]+)"[^)]*\\)|"([^"]*)")`));
+    return m ? (m[1] ?? m[2] ?? "") : "";
+  };
 
-  while ((rowMatch = rowRegex.exec(virtualHtml)) !== null) {
-    const cells: string[] = [];
-    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    let cellMatch: RegExpExecArray | null;
-    while ((cellMatch = cellRe.exec(rowMatch[1])) !== null) {
-      cells.push(cellMatch[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim());
-    }
-    if (cells.length < 8) continue;
-
-    // Columnas: Ver(img) | N°folio | Estado | Fecha | Rut | Nombre | Soc.Prof. | Brutos | Retenido | Pagado | Observar
-    const folio = cells[1].replace(/\./g, "").replace(/,/g, "").trim();
-    if (!/^\d+$/.test(folio)) continue;
+  for (let i = 1; i <= cant; i++) {
+    const bruto = parseInt(getVal(`totalhonorarios_${i}`) || "0", 10);
+    const liquido = parseInt(getVal(`honorariosliquidos_${i}`) || "0", 10);
+    const rut = getVal(`rutemisor_${i}`);
+    const dv = getVal(`dvemisor_${i}`);
     docs.push({
-      anio, mes, folio,
-      fecha_emision: cells[3] ?? "",
-      rut_emisor: cells[4] ?? "",
-      nombre_emisor: cells[5] ?? "",
-      monto_bruto: parseMonto(cells[7] ?? "0"),
-      retencion: parseMonto(cells[8] ?? "0"),
-      monto_liquido: parseMonto(cells[9] ?? "0"),
+      anio, mes,
+      folio: getVal(`nroboleta_${i}`),
+      fecha_emision: getVal(`fecha_boleta_${i}`),
+      rut_emisor: rut && dv ? `${rut}-${dv}` : rut,
+      nombre_emisor: getVal(`nombre_emisor_${i}`),
+      monto_bruto: bruto,
+      retencion: bruto - liquido,
+      monto_liquido: liquido,
     });
   }
   return docs;
