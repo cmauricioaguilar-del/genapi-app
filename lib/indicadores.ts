@@ -13,23 +13,31 @@ const INDICADORES = ["uf", "utm", "dolar", "euro", "ipc"] as const;
 type NombreIndicador = typeof INDICADORES[number];
 
 async function fetchIndicador(nombre: NombreIndicador, anio: string, mes: string): Promise<number | null> {
-  // mindicador.cl: GET /api/{nombre}/{dd-mm-yyyy}
-  // Para período mensual usamos el último día del mes
-  const ultimoDia = new Date(parseInt(anio), parseInt(mes), 0).getDate();
-  const fecha = `${String(ultimoDia).padStart(2, "0")}-${mes}-${anio}`;
+  // mindicador.cl: GET /api/{nombre}/{anio} devuelve serie anual con observaciones mensuales
+  // Filtramos por el mes buscado (campo fecha en formato ISO)
+  const mesNum = parseInt(mes, 10);
 
   try {
-    const resp = await fetch(`https://mindicador.cl/api/${nombre}/${fecha}`, {
+    const resp = await fetch(`https://mindicador.cl/api/${nombre}/${anio}`, {
       headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!resp.ok) return null;
     const json = await resp.json();
-    const serie = json?.serie;
-    if (Array.isArray(serie) && serie.length > 0) {
-      return Number(serie[0].valor) || null;
-    }
-    return null;
+    const serie: Array<{ fecha: string; valor: number }> = json?.serie ?? [];
+    if (!Array.isArray(serie) || serie.length === 0) return null;
+
+    // Buscar la observación más reciente dentro del mes pedido
+    const delMes = serie.filter((e) => {
+      const d = new Date(e.fecha);
+      return d.getFullYear() === parseInt(anio, 10) && d.getMonth() + 1 === mesNum;
+    });
+    if (delMes.length > 0) return Number(delMes[0].valor) || null;
+
+    // Para IPC y algunos indicadores la observación del mes puede estar en el mes siguiente;
+    // usamos la última observación disponible antes o dentro del mes
+    const anteriores = serie.filter((e) => new Date(e.fecha) <= new Date(parseInt(anio, 10), mesNum, 0));
+    return anteriores.length > 0 ? Number(anteriores[0].valor) || null : null;
   } catch {
     return null;
   }
