@@ -349,10 +349,14 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
     virtualHtml += writeMatch[1].replace(/\\\//g, "/");
   }
 
-  // Buscar data JS embebida (función mostrar() o arrays con folios)
-  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) ?? [];
-  const scripts = scriptMatch.join(" ").replace(/\s+/g, " ");
-  console.log(`[honorarios-parse] mes=${mes} vHtml=${virtualHtml.length} scripts_len=${scripts.length} scripts_sample=${scripts.slice(0, 600)}`);
+  // Buscar scripts inline con contenido (no los externos con src=)
+  const inlineRe = /<script(?![^>]*\bsrc\b)[^>]*>([\s\S]*?)<\/script>/gi;
+  let inlineMatch: RegExpExecArray | null;
+  let lastInline = "";
+  while ((inlineMatch = inlineRe.exec(html)) !== null) {
+    if (inlineMatch[1].trim().length > 50) lastInline = inlineMatch[1].trim();
+  }
+  console.log(`[honorarios-parse] mes=${mes} lastInline_len=${lastInline.length} sample=${lastInline.replace(/\s+/g, " ").slice(0, 800)}`);
   if (!virtualHtml) return docs;
 
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
