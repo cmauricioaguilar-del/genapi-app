@@ -324,9 +324,12 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
           "Referer": `https://loa.sii.cl/cgi_IMT/TMBCOC_InformeAnualBheRec.cgi?rut_arrastre=${rutDigitos}&dv_arrastre=${dv}&cbanoinformeanual=${anio}`,
         },
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) { console.error(`[honorarios] HTTP ${resp.status} mes=${mes}`); continue; }
       const html = await resp.text();
-      honorarios.push(...parsearHonorariosHTML(html, anio, mes));
+      console.log(`[honorarios] mes=${mes} status=${resp.status} html_len=${html.length} snippet=${html.slice(0, 300).replace(/\s+/g, " ")}`);
+      const found = parsearHonorariosHTML(html, anio, mes);
+      console.log(`[honorarios] mes=${mes} registros=${found.length}`);
+      honorarios.push(...found);
     }
 
     return { ok: true, honorarios };
