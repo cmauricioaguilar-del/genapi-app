@@ -283,3 +283,87 @@ export async function extraerRCV(
     return { ok: false, error: `Error al conectar con el SII: ${e.message}` };
   }
 }
+
+export interface HonorarioSII {
+  anio: string;
+  mes: string;
+  folio: string;
+  fecha_emision: string;
+  rut_emisor: string;
+  nombre_emisor: string;
+  monto_bruto: number;
+  retencion: number;
+  monto_liquido: number;
+}
+
+export interface HonorariosResult {
+  ok: boolean;
+  honorarios?: HonorarioSII[];
+  error?: string;
+}
+
+export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, anio: string): Promise<HonorariosResult> {
+  const clave = decrypt(siiClaveEnc);
+  const rutNormalizado = siiRut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
+  const rutDigitos = rutNormalizado.slice(0, -1);
+  const dv = rutNormalizado.slice(-1);
+
+  try {
+    const cookies = await loginSII(rutDigitos, dv, clave);
+    if (!cookies) return { ok: false, error: "No se pudo autenticar en el SII." };
+
+    const honorarios: HonorarioSII[] = [];
+    const meses = ["01","02","03","04","05","06","07","08","09","10","11","12"];
+
+    for (const mes of meses) {
+      const url = `https://loa.sii.cl/cgi_IMT/TMBCOC_InformeMensualBheRec.cgi?cbanoinformemensual=${anio}&cbmesinformemensual=${mes}&dv_arrastre=${dv}&pagina_solicitada=0&rut_arrastre=${rutDigitos}`;
+      const resp = await siFetch(url, {
+        headers: {
+          "Cookie": cookies,
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+          "Referer": `https://loa.sii.cl/cgi_IMT/TMBCOC_InformeAnualBheRec.cgi?rut_arrastre=${rutDigitos}&dv_arrastre=${dv}&cbanoinformeanual=${anio}`,
+        },
+      });
+      if (!resp.ok) continue;
+      const html = await resp.text();
+      honorarios.push(...parsearHonorariosHTML(html, anio, mes));
+    }
+
+    return { ok: true, honorarios };
+  } catch (e: any) {
+    console.error("Error extracción honorarios SII:", e);
+    return { ok: false, error: `Error al conectar con el SII: ${e.message}` };
+  }
+}
+
+function parsearHonorariosHTML(html: string, anio: string, mes: string): HonorarioSII[] {
+  const docs: HonorarioSII[] = [];
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch: RegExpExecArray | null;
+
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const cells: string[] = [];
+    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cellMatch: RegExpExecArray | null;
+    while ((cellMatch = cellRe.exec(rowMatch[1])) !== null) {
+      cells.push(cellMatch[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim());
+    }
+    if (cells.length < 7) continue;
+    const folio = cells[0].replace(/\./g, "").replace(/,/g, "");
+    if (!/^\d+$/.test(folio)) continue;
+    docs.push({
+      anio, mes, folio,
+      fecha_emision: cells[1] ?? "",
+      rut_emisor: cells[2] ?? "",
+      nombre_emisor: cells[3] ?? "",
+      monto_bruto: parseMonto(cells[4]),
+      retencion: parseMonto(cells[5]),
+      monto_liquido: parseMonto(cells[6]),
+    });
+  }
+  return docs;
+}
+
+function parseMonto(s: string): number {
+  return parseInt(s.replace(/\./g, "").replace(/,/g, "").replace(/[^\d-]/g, "") || "0", 10) || 0;
+}
