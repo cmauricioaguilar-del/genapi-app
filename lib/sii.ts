@@ -198,7 +198,7 @@ async function llamarApiDetalle(
       ptributario: periodo,
       estadoContab: "REGISTRO",
       operacion,
-      tipoDocumento: isNaN(Number(tipoDoc)) ? tipoDoc : Number(tipoDoc),
+      codTipoDoc: String(tipoDoc),
       busquedaInicial: true,
     },
   };
