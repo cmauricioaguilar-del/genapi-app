@@ -326,7 +326,10 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
       });
       if (!resp.ok) { console.error(`[honorarios] HTTP ${resp.status} mes=${mes}`); continue; }
       const html = await resp.text();
-      console.log(`[honorarios] mes=${mes} status=${resp.status} html_len=${html.length} snippet=${html.slice(0, 300).replace(/\s+/g, " ")}`);
+      // Loguear fragmento con la tabla de datos
+      const tableIdx = html.search(/<table/i);
+      const tableSnippet = tableIdx >= 0 ? html.slice(tableIdx, tableIdx + 800).replace(/\s+/g, " ") : "NO-TABLE";
+      console.log(`[honorarios] mes=${mes} html_len=${html.length} table=${tableSnippet}`);
       const found = parsearHonorariosHTML(html, anio, mes);
       console.log(`[honorarios] mes=${mes} registros=${found.length}`);
       honorarios.push(...found);
