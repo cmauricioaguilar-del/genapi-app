@@ -356,7 +356,8 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
   while ((inlineMatch = inlineRe.exec(html)) !== null) {
     if (inlineMatch[1].trim().length > 50) lastInline = inlineMatch[1].trim();
   }
-  console.log(`[honorarios-parse] mes=${mes} lastInline_len=${lastInline.length} sample=${lastInline.replace(/\s+/g, " ").slice(0, 800)}`);
+  const inlineClean = lastInline.replace(/\s+/g, " ");
+  console.log(`[honorarios-parse] mes=${mes} len=${lastInline.length} tail=${inlineClean.slice(Math.max(0, inlineClean.length - 1200))}`);
   if (!virtualHtml) return docs;
 
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
