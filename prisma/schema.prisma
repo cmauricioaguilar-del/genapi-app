@@ -35,10 +35,15 @@ model Empresa {
   clienteId  String
   cliente    Cliente    @relation(fields: [clienteId], references: [id])
 
+  webhookUrl    String?
+  webhookSecret String?
+
   extracciones  Extraccion[]
   logsUso       LogUso[]
   ventas        Venta[]
   compras       Compra[]
+  honorarios    Honorario[]
+  f29s          F29Genapi[]
 
   @@map("empresas")
 }
@@ -57,6 +62,8 @@ model Extraccion {
   empresa    Empresa  @relation(fields: [empresaId], references: [id])
   ventas     Venta[]
   compras    Compra[]
+  honorarios Honorario[]
+  f29        F29Genapi?
 
   @@map("extracciones")
 }
@@ -120,6 +127,59 @@ model LogUso {
   empresa    Empresa  @relation(fields: [empresaId], references: [id])
 
   @@map("logs_uso")
+}
+
+model Honorario {
+  id             String   @id @default(uuid())
+  anio           String
+  mes            String
+  folio          String
+  fechaEmision   String
+  rutEmisor      String
+  nombreEmisor   String
+  montoBruto     Int      @default(0)
+  retencion      Int      @default(0)
+  montoLiquido   Int      @default(0)
+  extractedAt    DateTime @default(now())
+
+  empresaId    String
+  extraccionId String
+  empresa      Empresa    @relation(fields: [empresaId], references: [id])
+  extraccion   Extraccion @relation(fields: [extraccionId], references: [id])
+
+  @@map("honorarios")
+}
+
+model F29Genapi {
+  id                  String   @id @default(uuid())
+  period              String
+  ivaDebito           Int      @default(0)
+  ivaCredito          Int      @default(0)
+  ivaRemanente        Int      @default(0)
+  ivaNeto             Int      @default(0)
+  retencionHonorarios Int      @default(0)
+  ppm                 Int      @default(0)
+  totalPagar          Int      @default(0)
+  rawData             Json?
+  extractedAt         DateTime @default(now())
+
+  empresaId    String
+  extraccionId String   @unique
+  empresa      Empresa    @relation(fields: [empresaId], references: [id])
+  extraccion   Extraccion @relation(fields: [extraccionId], references: [id])
+
+  @@map("f29_genapi")
+}
+
+model IndicadorEconomico {
+  id      String @id @default(uuid())
+  periodo String
+  nombre  String
+  valor   Float
+  fecha   String
+
+  @@unique([periodo, nombre])
+  @@map("indicadores_economicos")
 }
 
 model Admin {
