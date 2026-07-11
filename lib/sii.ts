@@ -296,6 +296,10 @@ export async function extraerRCV(
 
     console.log(`Extracción completa: ${compras.length} compras, ${ventas.length} ventas`);
 
+    siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/" },
+    }).catch(() => {});
+
     return { ok: true, ventas, compras };
   } catch (e: any) {
     console.error("Error extracción SII:", e);
