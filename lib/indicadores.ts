@@ -27,17 +27,21 @@ async function fetchIndicador(nombre: NombreIndicador, anio: string, mes: string
     const serie: Array<{ fecha: string; valor: number }> = json?.serie ?? [];
     if (!Array.isArray(serie) || serie.length === 0) return null;
 
-    // Buscar la observación más reciente dentro del mes pedido
-    const delMes = serie.filter((e) => {
-      const d = new Date(e.fecha);
-      return d.getFullYear() === parseInt(anio, 10) && d.getMonth() + 1 === mesNum;
-    });
+    const anioNum = parseInt(anio, 10);
+
+    // Buscar observación dentro del mes pedido (comparar año-mes del string ISO)
+    const isoMes = `${anio}-${mes}`;
+    const delMes = serie.filter((e) => e.fecha && e.fecha.startsWith(isoMes));
     if (delMes.length > 0) return Number(delMes[0].valor) || null;
 
-    // Para IPC y algunos indicadores la observación del mes puede estar en el mes siguiente;
-    // usamos la última observación disponible antes o dentro del mes
-    const anteriores = serie.filter((e) => new Date(e.fecha) <= new Date(parseInt(anio, 10), mesNum, 0));
-    return anteriores.length > 0 ? Number(anteriores[0].valor) || null : null;
+    // Fallback: última observación antes del fin del mes (IPC se publica con rezago)
+    const limite = `${anio}-${mes}-31`;
+    const anteriores = serie.filter((e) => e.fecha && e.fecha.slice(0, 10) <= limite);
+    if (anteriores.length > 0) return Number(anteriores[0].valor) || null;
+
+    // Último recurso: primera observación de la serie para ese año
+    const delAnio = serie.filter((e) => e.fecha && e.fecha.startsWith(anio));
+    return delAnio.length > 0 ? Number(delAnio[delAnio.length - 1].valor) || null : null;
   } catch {
     return null;
   }
