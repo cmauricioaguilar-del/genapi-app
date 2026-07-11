@@ -348,17 +348,21 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
     while ((cellMatch = cellRe.exec(rowMatch[1])) !== null) {
       cells.push(cellMatch[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim());
     }
-    if (cells.length < 7) continue;
-    const folio = cells[0].replace(/\./g, "").replace(/,/g, "");
+    if (cells.length < 8) continue;
+
+    // La tabla SII tiene: Ver | N° | Estado | Fecha | Rut | Nombre | Soc.Prof. | Brutos | Retenido | Pagado | Observar
+    // cells[0]=Ver(link), cells[1]=N°folio, cells[2]=Estado, cells[3]=Fecha,
+    // cells[4]=Rut, cells[5]=Nombre, cells[6]=Soc.Prof., cells[7]=Brutos, cells[8]=Retenido, cells[9]=Pagado
+    const folio = cells[1].replace(/\./g, "").replace(/,/g, "").trim();
     if (!/^\d+$/.test(folio)) continue;
     docs.push({
       anio, mes, folio,
-      fecha_emision: cells[1] ?? "",
-      rut_emisor: cells[2] ?? "",
-      nombre_emisor: cells[3] ?? "",
-      monto_bruto: parseMonto(cells[4]),
-      retencion: parseMonto(cells[5]),
-      monto_liquido: parseMonto(cells[6]),
+      fecha_emision: cells[3] ?? "",
+      rut_emisor: cells[4] ?? "",
+      nombre_emisor: cells[5] ?? "",
+      monto_bruto: parseMonto(cells[7] ?? "0"),
+      retencion: parseMonto(cells[8] ?? "0"),
+      monto_liquido: parseMonto(cells[9] ?? "0"),
     });
   }
   return docs;
