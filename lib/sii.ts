@@ -198,7 +198,7 @@ async function llamarApiDetalle(
       ptributario: periodo,
       estadoContab: "REGISTRO",
       operacion,
-      tipoDocumento: isNaN(Number(tipoDoc)) ? tipoDoc : Number(tipoDoc),
+      dcvCodigo: isNaN(Number(tipoDoc)) ? tipoDoc : Number(tipoDoc),
       busquedaInicial: true,
     },
   };
@@ -280,10 +280,10 @@ export async function extraerRCV(
     ]);
 
     const comprasPromises = resumenCompras.map((tipo: any) =>
-      llamarApiDetalle(cookies, rutDigitos, dv, period, "COMPRA", tipo.rsmnTipoDocInteger ?? tipo.tipoDoc ?? tipo.codDoc ?? tipo.tipo)
+      llamarApiDetalle(cookies, rutDigitos, dv, period, "COMPRA", tipo.dcvCodigo ?? tipo.rsmnTipoDocInteger)
     );
     const ventasPromises = resumenVentas.map((tipo: any) =>
-      llamarApiDetalle(cookies, rutDigitos, dv, period, "VENTA", tipo.rsmnTipoDocInteger ?? tipo.tipoDoc ?? tipo.codDoc ?? tipo.tipo)
+      llamarApiDetalle(cookies, rutDigitos, dv, period, "VENTA", tipo.dcvCodigo ?? tipo.rsmnTipoDocInteger)
     );
 
     const [comprasListas, ventasListas] = await Promise.all([
