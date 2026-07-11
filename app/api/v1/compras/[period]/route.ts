@@ -29,7 +29,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ peri
     empresa: empresa.nombre,
     rut: empresa.siiRut,
     period,
-    total: resultado.data.length,
-    data: resultado.data,
+    total: resultado.data?.length ?? 0,
+    data: resultado.data ?? [],
   });
 }
