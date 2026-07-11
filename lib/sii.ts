@@ -273,8 +273,9 @@ export async function extraerRCV(
     const ventas = ventasListas.flat();
 
 
-    siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
-      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/" },
+    // Cerrar sesión explícitamente para liberar sesiones en el SII
+    await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
     }).catch(() => {});
 
     return { ok: true, ventas, compras };
@@ -328,6 +329,10 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
       const html = await resp.text();
       honorarios.push(...parsearHonorariosHTML(html, anio, mes));
     }
+
+    await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
+    }).catch(() => {});
 
     return { ok: true, honorarios };
   } catch (e: any) {
