@@ -187,7 +187,7 @@ async function llamarApiDetalle(
 
   const payload = {
     metaData: {
-      namespace: "cl.sii.sdi.lob.diii.consdcv.data.api.interfaces.FacadeService/getDetalleDoc",
+      namespace: `cl.sii.sdi.lob.diii.consdcv.data.api.interfaces.FacadeService/${operacion === "COMPRA" ? "getDetalleCompra" : "getDetalleVenta"}`,
       conversationId,
       transactionId: crypto.randomUUID(),
       page: null,
@@ -204,7 +204,7 @@ async function llamarApiDetalle(
   };
 
   const resp = await siFetch(
-    "https://www4.sii.cl/consdcvinternetui/services/data/facadeService/getDetalleDoc",
+    `https://www4.sii.cl/consdcvinternetui/services/data/facadeService/${operacion === "COMPRA" ? "getDetalleCompra" : "getDetalleVenta"}`,
     {
       method: "POST",
       headers: {
