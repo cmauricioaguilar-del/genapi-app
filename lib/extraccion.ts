@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "./db";
 import { extraerRCV, DocumentoSII } from "./sii";
-
-const prisma = new PrismaClient();
 
 export async function obtenerOExtraerVentas(empresaId: string, siiRut: string, siiClaveEnc: string, period: string) {
   // Si ya hay datos en BD, retornarlos
