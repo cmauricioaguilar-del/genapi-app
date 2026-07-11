@@ -226,6 +226,7 @@ async function llamarApiDetalle(
   }
 
   const json = await resp.json();
+  console.log(`getDetalle ${operacion} OK:`, JSON.stringify(json).substring(0, 400));
   return parsearDetalle(json);
 }
 
