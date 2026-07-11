@@ -356,8 +356,10 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
   while ((inlineMatch = inlineRe.exec(html)) !== null) {
     if (inlineMatch[1].trim().length > 50) lastInline = inlineMatch[1].trim();
   }
-  const inlineClean = lastInline.replace(/\s+/g, " ");
-  console.log(`[honorarios-parse] mes=${mes} len=${lastInline.length} tail=${inlineClean.slice(Math.max(0, inlineClean.length - 1200))}`);
+  // Buscar el objeto xml_values que contiene los datos de boletas
+  const xmlValIdx = html.indexOf("xml_values");
+  const xmlValSnippet = xmlValIdx >= 0 ? html.slice(Math.max(0, xmlValIdx - 100), xmlValIdx + 1500).replace(/\s+/g, " ") : "NOT-FOUND";
+  console.log(`[honorarios-parse] mes=${mes} xml_values_at=${xmlValIdx} ctx=${xmlValSnippet}`);
   if (!virtualHtml) return docs;
 
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
