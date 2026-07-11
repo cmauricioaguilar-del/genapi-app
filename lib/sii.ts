@@ -349,7 +349,10 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
     virtualHtml += writeMatch[1].replace(/\\\//g, "/");
   }
 
-  console.log(`[honorarios-parse] mes=${mes} virtualHtml_len=${virtualHtml.length} sample=${virtualHtml.slice(0, 400).replace(/\s+/g, " ")}`);
+  // Buscar data JS embebida (función mostrar() o arrays con folios)
+  const scriptMatch = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) ?? [];
+  const scripts = scriptMatch.join(" ").replace(/\s+/g, " ");
+  console.log(`[honorarios-parse] mes=${mes} vHtml=${virtualHtml.length} scripts_len=${scripts.length} scripts_sample=${scripts.slice(0, 600)}`);
   if (!virtualHtml) return docs;
 
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
