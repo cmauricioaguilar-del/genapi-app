@@ -3,7 +3,6 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-// Borra las extracciones cacheadas para forzar re-extracción
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (secret !== process.env.CRON_SECRET) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
@@ -15,7 +14,16 @@ export async function GET(req: NextRequest) {
   if (empresaId) where.empresaId = empresaId;
   if (period) where.period = period;
 
-  const deleted = await prisma.extraccion.deleteMany({ where });
+  // Obtener IDs de extracciones a borrar
+  const extracciones = await prisma.extraccion.findMany({ where, select: { id: true } });
+  const ids = extracciones.map(e => e.id);
 
-  return NextResponse.json({ ok: true, eliminadas: deleted.count });
+  if (ids.length === 0) return NextResponse.json({ ok: true, eliminadas: 0 });
+
+  // Borrar hijos primero, luego las extracciones
+  await prisma.venta.deleteMany({ where: { extraccionId: { in: ids } } });
+  await prisma.compra.deleteMany({ where: { extraccionId: { in: ids } } });
+  await prisma.extraccion.deleteMany({ where: { id: { in: ids } } });
+
+  return NextResponse.json({ ok: true, eliminadas: ids.length });
 }
