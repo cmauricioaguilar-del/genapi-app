@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
   const updated = await prisma.empresa.update({
     where: { id: empresa.id },
     data: {
+      rut: "78269533-9",
       siiRut: "78269533-9",
       siiClaveEnc: encrypt("Ludica25$"),
     },
