@@ -87,6 +87,7 @@ export default async function Dashboard() {
           {[
             { href: "/dashboard", label: "Dashboard", icon: "◈" },
             { href: "/dashboard/empresas/nueva", label: "Empresas", icon: "⊞" },
+            { href: "/dashboard/webhook", label: "Webhook", icon: "⇆" },
           ].map(item => (
             <Link key={item.href} href={item.href}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#cdd6e8] hover:bg-[#112240] transition">
