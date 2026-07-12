@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     data: {
       rut: "78269533-9",
       siiRut: "78269533-9",
-      siiClaveEnc: encrypt("Ludica25$"),
+      siiClaveEnc: encrypt("Ludicas25$"),
     },
   });
 
