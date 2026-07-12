@@ -221,7 +221,7 @@ function parsearDetalle(json: any, tipoDocFallback = ""): DocumentoSII[] {
   for (const r of lista) {
     const rutDoc = r.detRutDoc ? `${r.detRutDoc}-${r.detDvDoc ?? ""}` : "";
     docs.push({
-      doc_type: String(r.detTipoDoc ?? r.tipoDoc ?? r.codDoc ?? "") || tipoDocFallback,
+      doc_type: String(r.detTipoDoc ?? r.tipoDoc ?? r.codDoc ?? "") || String(tipoDocFallback),
       doc_number: String(r.detNroDoc ?? r.folio ?? r.nroDoc ?? ""),
       rut_emisor: rutDoc || r.rutEmisor || "",
       nombre_emisor: r.detRznSoc ?? r.razonSocial ?? "",

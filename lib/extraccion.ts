@@ -140,12 +140,12 @@ export async function obtenerOExtraerF29(empresaId: string, siiRut: string, siiC
 
 async function guardarVentas(extraccionId: string, empresaId: string, period: string, docs: DocumentoSII[]) {
   if (!docs.length) return;
-  await prisma.venta.createMany({ data: docs.map((d) => ({ extraccionId, empresaId, period, docType: d.doc_type, docNumber: d.doc_number, rutEmisor: d.rut_emisor ?? "", nombreEmisor: d.nombre_emisor ?? "", rutReceptor: d.rut_receptor ?? "", nombreReceptor: d.nombre_receptor ?? "", fechaEmision: d.fecha_emision, montoNeto: d.monto_neto, montoIva: d.monto_iva, montoTotal: d.monto_total, montoExento: d.monto_exento })) });
+  await prisma.venta.createMany({ data: docs.map((d) => ({ extraccionId, empresaId, period, docType: String(d.doc_type), docNumber: d.doc_number, rutEmisor: d.rut_emisor ?? "", nombreEmisor: d.nombre_emisor ?? "", rutReceptor: d.rut_receptor ?? "", nombreReceptor: d.nombre_receptor ?? "", fechaEmision: d.fecha_emision, montoNeto: d.monto_neto, montoIva: d.monto_iva, montoTotal: d.monto_total, montoExento: d.monto_exento })) });
 }
 
 async function guardarCompras(extraccionId: string, empresaId: string, period: string, docs: DocumentoSII[]) {
   if (!docs.length) return;
-  await prisma.compra.createMany({ data: docs.map((d) => ({ extraccionId, empresaId, period, docType: d.doc_type, docNumber: d.doc_number, rutEmisor: d.rut_emisor ?? "", nombreEmisor: d.nombre_emisor ?? "", rutReceptor: d.rut_receptor ?? "", nombreReceptor: d.nombre_receptor ?? "", fechaEmision: d.fecha_emision, montoNeto: d.monto_neto, montoIva: d.monto_iva, montoTotal: d.monto_total, montoExento: d.monto_exento })) });
+  await prisma.compra.createMany({ data: docs.map((d) => ({ extraccionId, empresaId, period, docType: String(d.doc_type), docNumber: d.doc_number, rutEmisor: d.rut_emisor ?? "", nombreEmisor: d.nombre_emisor ?? "", rutReceptor: d.rut_receptor ?? "", nombreReceptor: d.nombre_receptor ?? "", fechaEmision: d.fecha_emision, montoNeto: d.monto_neto, montoIva: d.monto_iva, montoTotal: d.monto_total, montoExento: d.monto_exento })) });
 }
 
 async function guardarHonorarios(extraccionId: string, empresaId: string, docs: HonorarioSII[]) {
