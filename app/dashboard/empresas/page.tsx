@@ -9,7 +9,7 @@ export default async function EmpresasPage() {
   if (!session) redirect("/login");
 
   const empresas = await prisma.empresa.findMany({
-    where: { clienteId: session.clienteId },
+    where: { clienteId: session.id },
     orderBy: { creadoEn: "asc" },
     select: { id: true, nombre: true, rut: true, apiToken: true, activa: true, creadoEn: true },
   });

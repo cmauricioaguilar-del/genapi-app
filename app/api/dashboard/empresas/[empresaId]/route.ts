@@ -13,7 +13,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ e
     select: { clienteId: true },
   });
 
-  if (!empresa || empresa.clienteId !== session.clienteId) {
+  if (!empresa || empresa.clienteId !== session.id) {
     return NextResponse.json({ error: "No autorizado." }, { status: 403 });
   }
 
