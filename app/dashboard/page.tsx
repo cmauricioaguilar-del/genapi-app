@@ -86,7 +86,7 @@ export default async function Dashboard() {
           <p className="text-xs uppercase tracking-widest text-[#a8b4c8] mb-3 px-2">Menú</p>
           {[
             { href: "/dashboard", label: "Dashboard", icon: "◈" },
-            { href: "/dashboard/empresas/nueva", label: "Empresas", icon: "⊞" },
+            { href: "/dashboard/empresas", label: "Empresas", icon: "⊞" },
             { href: "/dashboard/webhook", label: "Webhook", icon: "⇆" },
           ].map(item => (
             <Link key={item.href} href={item.href}
