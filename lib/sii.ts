@@ -166,6 +166,7 @@ async function llamarApiDetalle(
   operacion: "COMPRA" | "VENTA",
   tipoDoc: string
 ): Promise<DocumentoSII[]> {
+  // tipoDoc es el código SII conocido (33, 61, etc.) — se usa como fallback si el JSON no lo incluye
   const tokenMatch = cookies.match(/(?:TOKEN|CSESSIONID)=([^;]+)/);
   const conversationId = tokenMatch ? tokenMatch[1] : "unknown";
 
@@ -210,17 +211,17 @@ async function llamarApiDetalle(
   }
 
   const json = await resp.json();
-  return parsearDetalle(json);
+  return parsearDetalle(json, tipoDoc);
 }
 
-function parsearDetalle(json: any): DocumentoSII[] {
+function parsearDetalle(json: any, tipoDocFallback = ""): DocumentoSII[] {
   const docs: DocumentoSII[] = [];
   const lista = Array.isArray(json?.data) ? json.data : [];
 
   for (const r of lista) {
     const rutDoc = r.detRutDoc ? `${r.detRutDoc}-${r.detDvDoc ?? ""}` : "";
     docs.push({
-      doc_type: String(r.detTipoDoc ?? r.tipoDoc ?? r.codDoc ?? ""),
+      doc_type: String(r.detTipoDoc ?? r.tipoDoc ?? r.codDoc ?? "") || tipoDocFallback,
       doc_number: String(r.detNroDoc ?? r.folio ?? r.nroDoc ?? ""),
       rut_emisor: rutDoc || r.rutEmisor || "",
       nombre_emisor: r.detRznSoc ?? r.razonSocial ?? "",
