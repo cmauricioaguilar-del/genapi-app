@@ -23,10 +23,7 @@ export async function obtenerOExtraerVentas(empresaId: string, siiRut: string, s
     include: { ventas: true },
     orderBy: { creadoEn: "desc" },
   });
-  if (existing && existing.ventas.length > 0) {
-    notificar(empresaId, "ventas", period, "SUCCESS", existing.ventas.length, existing.id);
-    return { ok: true, data: existing.ventas, fromCache: true };
-  }
+  if (existing && existing.ventas.length > 0) return { ok: true, data: existing.ventas, fromCache: true };
 
   const extraccion = await prisma.extraccion.create({ data: { empresaId, period, modulo: "ventas", estado: "RUNNING" } });
 
@@ -56,10 +53,7 @@ export async function obtenerOExtraerCompras(empresaId: string, siiRut: string, 
     include: { compras: true },
     orderBy: { creadoEn: "desc" },
   });
-  if (existing && existing.compras.length > 0) {
-    notificar(empresaId, "compras", period, "SUCCESS", existing.compras.length, existing.id);
-    return { ok: true, data: existing.compras, fromCache: true };
-  }
+  if (existing && existing.compras.length > 0) return { ok: true, data: existing.compras, fromCache: true };
 
   const extraccion = await prisma.extraccion.create({ data: { empresaId, period, modulo: "compras", estado: "RUNNING" } });
 
