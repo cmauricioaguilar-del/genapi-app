@@ -13,7 +13,6 @@ export default async function DocsPage() {
   });
   if (!cliente) redirect("/login");
 
-  const token = cliente.empresas[0]?.apiToken ?? "TU_TOKEN";
   const BASE = "https://genapi.cl/api/v1";
 
   return (
@@ -58,11 +57,25 @@ export default async function DocsPage() {
           <Section title="Autenticación">
             <p className="text-sm text-[#a8b4c8] mb-4">
               Todas las llamadas requieren el header <Code>X-Api-Token</Code> con el token de tu empresa.
-              Encuéntralo en <Link href="/dashboard/empresas" className="text-[#c9a84c] hover:underline">Empresas</Link>.
+              Cada empresa tiene su propio token.
             </p>
-            <div className="bg-[#0a1628] rounded-lg border border-white/10 p-4 font-mono text-sm">
-              <span className="text-[#a8b4c8]">X-Api-Token: </span>
-              <span className="text-green-400">{token}</span>
+            <div className="space-y-3">
+              {cliente.empresas.length === 0 ? (
+                <p className="text-sm text-[#a8b4c8]">
+                  Aún no tienes empresas.{" "}
+                  <Link href="/dashboard/empresas/nueva" className="text-[#c9a84c] hover:underline">Agrega una empresa</Link> para obtener tu token.
+                </p>
+              ) : (
+                cliente.empresas.map((emp: { id: string; nombre: string; rut: string; apiToken: string }) => (
+                  <div key={emp.id} className="bg-[#0a1628] rounded-lg border border-white/10 p-4">
+                    <p className="text-xs text-[#a8b4c8] mb-2">{emp.nombre} — <span className="text-[#c9a84c]">{emp.rut}</span></p>
+                    <div className="font-mono text-sm">
+                      <span className="text-[#a8b4c8]">X-Api-Token: </span>
+                      <span className="text-green-400">{emp.apiToken}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </Section>
 
@@ -75,7 +88,7 @@ export default async function DocsPage() {
             params={[
               { name: "period", where: "path", type: "string", desc: "Período en formato YYYYMM (ej. 202607)" },
             ]}
-            curl={`curl -H "X-Api-Token: ${token}" \\\n     "${BASE}/ventas/202607"`}
+            curl={`curl -H "X-Api-Token: TU_TOKEN" \\\n     "${BASE}/ventas/202607"`}
             response={`{
   "ok": true,
   "empresa": "Comercial Ejemplo SpA",
@@ -112,7 +125,7 @@ export default async function DocsPage() {
             params={[
               { name: "period", where: "path", type: "string", desc: "Período en formato YYYYMM (ej. 202607)" },
             ]}
-            curl={`curl -H "X-Api-Token: ${token}" \\\n     "${BASE}/compras/202607"`}
+            curl={`curl -H "X-Api-Token: TU_TOKEN" \\\n     "${BASE}/compras/202607"`}
             response={`{
   "ok": true,
   "empresa": "Comercial Ejemplo SpA",
@@ -149,7 +162,7 @@ export default async function DocsPage() {
             params={[
               { name: "anio", where: "path", type: "string", desc: "Año en formato YYYY (ej. 2026)" },
             ]}
-            curl={`curl -H "X-Api-Token: ${token}" \\\n     "${BASE}/honorarios/2026"`}
+            curl={`curl -H "X-Api-Token: TU_TOKEN" \\\n     "${BASE}/honorarios/2026"`}
             response={`{
   "ok": true,
   "empresa": "Comercial Ejemplo SpA",
@@ -183,7 +196,7 @@ export default async function DocsPage() {
             params={[
               { name: "period", where: "path", type: "string", desc: "Período en formato YYYYMM (ej. 202607)" },
             ]}
-            curl={`curl -H "X-Api-Token: ${token}" \\\n     "${BASE}/f29/202607"`}
+            curl={`curl -H "X-Api-Token: TU_TOKEN" \\\n     "${BASE}/f29/202607"`}
             response={`{
   "ok": true,
   "empresa": "Comercial Ejemplo SpA",
@@ -208,7 +221,7 @@ export default async function DocsPage() {
             title="Estado de la cuenta"
             description="Retorna información de la empresa y el uso del día. Útil para verificar que el token es válido."
             params={[]}
-            curl={`curl -H "X-Api-Token: ${token}" \\\n     "${BASE}/status"`}
+            curl={`curl -H "X-Api-Token: TU_TOKEN" \\\n     "${BASE}/status"`}
             response={`{
   "ok": true,
   "empresa": "Comercial Ejemplo SpA",
