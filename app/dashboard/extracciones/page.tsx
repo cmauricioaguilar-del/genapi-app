@@ -6,6 +6,7 @@ import Link from "next/link";
 const MODULO_LABEL: Record<string, string> = {
   ventas: "Registro de Ventas",
   compras: "Registro de Compras",
+  ventas_compras: "Ventas + Compras",
   f29: "Formulario 29",
   honorarios: "Boletas de Honorarios",
   indicadores: "Indicadores",
@@ -28,7 +29,7 @@ function duracion(creado: Date, actualizado: Date): string {
 function fmtFecha(d: Date): string {
   return d.toLocaleDateString("es-CL", {
     day: "2-digit", month: "2-digit", year: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    hour: "2-digit", minute: "2-digit", timeZone: "America/Santiago",
   });
 }
 
