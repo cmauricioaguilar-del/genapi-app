@@ -50,11 +50,13 @@ export async function crearSuscripcion(params: {
   planId: string;
   trialPeriodDays?: number;
   urlReturn: string;
+  urlConfirmation?: string;
 }): Promise<{ subscriptionId: string; url: string }> {
   const body: Record<string, string> = {
     customerId: params.customerId,
     planId: params.planId,
     urlReturn: params.urlReturn,
+    urlConfirmation: params.urlConfirmation ?? params.urlReturn.replace("/billing?status=pending", "/api/flow/webhook"),
   };
   if (params.trialPeriodDays) body.trialPeriodDays = String(params.trialPeriodDays);
 
