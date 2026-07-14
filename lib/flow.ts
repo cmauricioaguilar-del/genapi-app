@@ -19,7 +19,7 @@ function sign(params: Record<string, string>): string {
 }
 
 async function flowPost(service: string, body: Record<string, string>): Promise<any> {
-  const params = { ...body, apiKey: API_KEY };
+  const params: Record<string, string> = { ...body, apiKey: API_KEY };
   params.s = sign(params);
 
   const form = new URLSearchParams(params);
