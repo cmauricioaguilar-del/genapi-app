@@ -1,4 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "GENAPI — API SII Chile | Conecta tu software al SII en minutos",
+  description: "API REST para extraer ventas, compras, boletas de honorarios y Formulario 29 directamente del SII de Chile. Sin complicaciones, sin burocracia. Más barato que ApiPyme. Prueba gratis 30 días.",
+  alternates: { canonical: "https://genapi.cl" },
+};
 
 const LogoSVG = () => (
   <svg width="100%" viewBox="0 0 680 320" role="img" aria-label="Logo GENAPI">
