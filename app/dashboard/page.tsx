@@ -90,6 +90,7 @@ export default async function Dashboard() {
             { href: "/dashboard/extracciones", label: "Extracciones", icon: "↯" },
             { href: "/dashboard/webhook", label: "Webhook", icon: "⇆" },
             { href: "/dashboard/docs", label: "API Docs", icon: "⟨/⟩" },
+            { href: "/dashboard/billing", label: "Mi Plan", icon: "◎" },
           ].map(item => (
             <Link key={item.href} href={item.href}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[#cdd6e8] hover:bg-[#112240] transition">

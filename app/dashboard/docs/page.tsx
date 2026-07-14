@@ -38,6 +38,7 @@ export default async function DocsPage() {
             { href: "/dashboard/empresas", label: "Empresas", icon: "⊞" },
             { href: "/dashboard/webhook", label: "Webhook", icon: "⇆" },
             { href: "/dashboard/docs", label: "API Docs", icon: "⟨/⟩", active: true },
+            { href: "/dashboard/billing", label: "Mi Plan", icon: "◎" },
           ].map(item => (
             <Link key={item.href} href={item.href}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition ${item.active ? "bg-[#112240] text-white" : "text-[#cdd6e8] hover:bg-[#112240]"}`}>

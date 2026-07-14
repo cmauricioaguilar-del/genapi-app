@@ -11,10 +11,17 @@ model Cliente {
   email         String    @unique
   nombre        String
   claveHash     String
-  plan          String    @default("STARTER") // STARTER | PROFESIONAL | BUSINESS | ENTERPRISE
+  plan          String    @default("TRIAL") // TRIAL | STARTER | PROFESIONAL | BUSINESS | ENTERPRISE
   activo        Boolean   @default(true)
   creadoEn      DateTime  @default(now())
   actualizadoEn DateTime  @updatedAt
+
+  // Flow.cl billing
+  flowCustomerId      String?
+  flowSubscriptionId  String?
+  planVencimiento     DateTime?
+  trialUsado          Boolean   @default(false)
+  trialInicio         DateTime?
 
   empresas  Empresa[]
 
