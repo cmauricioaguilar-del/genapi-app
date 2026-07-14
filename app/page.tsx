@@ -96,14 +96,14 @@ export default function Landing() {
         <h2 className="text-3xl font-bold text-white text-center mb-12">Planes disponibles</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
-            { nombre: "Starter", precio: "0,70", empresas: "1", consultas: "3", modulos: ["Ventas", "Compras"], destacado: false },
-            { nombre: "Profesional", precio: "1,20", empresas: "5", consultas: "10", modulos: ["Ventas", "Compras", "F29", "Previred"], destacado: true },
-            { nombre: "Business", precio: "1,60", empresas: "10", consultas: "20", modulos: ["Ventas", "Compras", "F29", "Honorarios", "Arriendo", "Previred"], destacado: false },
+            { nombre: "Starter", precio: "$24.900", empresas: "1", consultas: "3", modulos: ["Ventas", "Compras", "Honorarios", "F29"], destacado: false },
+            { nombre: "Profesional", precio: "$44.900", empresas: "5", consultas: "20", modulos: ["Ventas", "Compras", "Honorarios", "F29", "Webhooks"], destacado: true },
+            { nombre: "Business", precio: "$59.900", empresas: "10", consultas: "100", modulos: ["Ventas", "Compras", "Honorarios", "F29", "Webhooks", "SLA 99.9%"], destacado: false },
           ].map((plan) => (
             <div key={plan.nombre} className={`rounded-xl p-6 border ${plan.destacado ? "bg-[#1e4d8c] border-[#c9a84c]" : "bg-[#112240] border-white/10"}`}>
               {plan.destacado && <div className="text-xs font-bold text-[#c9a84c] mb-3 uppercase tracking-wider">Más popular</div>}
               <h3 className="text-xl font-bold text-white mb-1">{plan.nombre}</h3>
-              <p className="text-3xl font-bold text-[#c9a84c] mb-1">{plan.precio} <span className="text-sm font-normal text-[#a8b4c8]">UF/mes+IVA</span></p>
+              <p className="text-3xl font-bold text-[#c9a84c] mb-1">{plan.precio} <span className="text-sm font-normal text-[#a8b4c8]">/ mes c/IVA</span></p>
               <p className="text-sm text-[#a8b4c8] mb-4">{plan.empresas} empresa{plan.empresas !== "1" ? "s" : ""} · {plan.consultas} consultas/día</p>
               <ul className="space-y-2 mb-6">
                 {plan.modulos.map(m => (
