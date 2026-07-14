@@ -93,7 +93,21 @@ export default function Landing() {
 
       {/* PRICING */}
       <section id="pricing" className="max-w-5xl mx-auto px-8 pb-16">
-        <h2 className="text-3xl font-bold text-white text-center mb-12">Planes disponibles</h2>
+        <h2 className="text-3xl font-bold text-white text-center mb-4">Planes disponibles</h2>
+        <p className="text-center text-[#a8b4c8] mb-10 text-sm">Comienza gratis 30 días, sin tarjeta de crédito. Todos los precios incluyen IVA.</p>
+
+        {/* TRIAL */}
+        <div className="mb-6 bg-[#112240] border border-[#c9a84c]/40 rounded-xl p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <span className="text-xs font-bold bg-[#c9a84c]/20 text-[#c9a84c] px-2 py-0.5 rounded uppercase tracking-wider">Prueba gratuita</span>
+            <h3 className="text-xl font-bold text-white mt-2">30 días gratis</h3>
+            <p className="text-sm text-[#a8b4c8] mt-1">1 empresa · 3 consultas/día · Ventas, Compras, Honorarios, F29 · Sin tarjeta de crédito</p>
+          </div>
+          <Link href="/registro" className="shrink-0 px-6 py-2.5 bg-[#c9a84c] text-[#0a1628] font-bold rounded-lg hover:bg-[#e4c97a] transition text-sm">
+            Crear cuenta gratis →
+          </Link>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {[
             { nombre: "Starter", precio: "$24.900", empresas: "1", consultas: "3", modulos: ["Ventas", "Compras", "Honorarios", "F29"], destacado: false },
