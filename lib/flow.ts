@@ -32,7 +32,7 @@ async function flowPost(service: string, body: Record<string, string>): Promise<
 }
 
 async function flowGet(service: string, query: Record<string, string>): Promise<any> {
-  const params = { ...query, apiKey: API_KEY };
+  const params: Record<string, string> = { ...query, apiKey: API_KEY };
   params.s = sign(params);
   const qs = new URLSearchParams(params).toString();
   const res = await fetch(`${FLOW_API}/${service}?${qs}`);
