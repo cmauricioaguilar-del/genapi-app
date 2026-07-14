@@ -87,6 +87,7 @@ export default async function Dashboard() {
           {[
             { href: "/dashboard", label: "Dashboard", icon: "◈" },
             { href: "/dashboard/empresas", label: "Empresas", icon: "⊞" },
+            { href: "/dashboard/extracciones", label: "Extracciones", icon: "↯" },
             { href: "/dashboard/webhook", label: "Webhook", icon: "⇆" },
             { href: "/dashboard/docs", label: "API Docs", icon: "⟨/⟩" },
           ].map(item => (
