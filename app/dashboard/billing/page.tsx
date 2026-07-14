@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
@@ -36,7 +36,7 @@ function fmtCLP(n: number) {
   return n.toLocaleString("es-CL", { style: "currency", currency: "CLP" });
 }
 
-export default function BillingPage() {
+function BillingContent() {
   const searchParams = useSearchParams();
   const status = searchParams.get("status");
 
@@ -195,5 +195,13 @@ export default function BillingPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={null}>
+      <BillingContent />
+    </Suspense>
   );
 }
