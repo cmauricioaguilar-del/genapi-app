@@ -1,7 +1,6 @@
 import { chromium, Browser, Page, BrowserContext } from "playwright";
 import { decrypt } from "./encryption";
 import type { F29SII } from "./siiF29";
-import { loginSII as loginSIIFetch } from "./sii";
 
 const MESES_ES: Record<string, string> = {
   "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
@@ -42,27 +41,6 @@ function parsearFormCompactoHtml(html: string, period: string): F29SII | null {
   };
 }
 
-// Parsea "NAME=value; NAME2=value2" en objetos de cookie para Playwright
-function parseCookieString(cookieStr: string, domain: string): { name: string; value: string; domain: string; path: string }[] {
-  return cookieStr.split(";").map(s => s.trim()).filter(Boolean).flatMap(pair => {
-    const idx = pair.indexOf("=");
-    if (idx < 0) return [];
-    const name = pair.slice(0, idx).trim();
-    const value = pair.slice(idx + 1).trim();
-    if (!name) return [];
-    return [{ name, value, domain, path: "/" }];
-  });
-}
-
-async function inyectarCookies(context: BrowserContext, cookieStr: string): Promise<void> {
-  // Inyectar para todos los dominios SII relevantes
-  const dominios = ["zeusr.sii.cl", "homer.sii.cl", "www4.sii.cl", "palena.sii.cl", ".sii.cl"];
-  const cookies: { name: string; value: string; domain: string; path: string }[] = [];
-  for (const dom of dominios) {
-    cookies.push(...parseCookieString(cookieStr, dom));
-  }
-  await context.addCookies(cookies);
-}
 
 async function extraerUnPeriodo(page: Page, rutDigitos: string, period: string): Promise<F29SII | null> {
   const anio = period.slice(0, 4);
@@ -200,6 +178,90 @@ async function extraerViaFetchDesdePagina(page: Page, rutDigitos: string, period
   return null;
 }
 
+async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, clave: string): Promise<boolean> {
+  const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
+
+  try {
+    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
+      waitUntil: "networkidle",
+      timeout: 30000,
+    });
+
+    // Diagnosticar qué inputs existen en la página
+    const inputs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("input")).map(el => ({
+        name: el.name, id: el.id, type: el.type, visible: el.offsetParent !== null,
+      }))
+    );
+    console.log(`[F29 PW] Inputs en login page:`, JSON.stringify(inputs));
+
+    // Llenar campos visibles por tipo (no por name, porque los con name son hidden)
+    const textInputs = await page.$$("input[type='text']:visible, input:not([type]):visible");
+    const passwordInputs = await page.$$("input[type='password']:visible");
+
+    console.log(`[F29 PW] Visible text inputs: ${textInputs.length}, password inputs: ${passwordInputs.length}`);
+
+    if (textInputs.length > 0) {
+      // El primer campo visible de texto suele ser el RUT
+      await textInputs[0].fill(rutConPuntos);
+      if (textInputs.length > 1) {
+        // Algunos portales tienen campo separado para DV
+        await textInputs[1].fill(dv);
+      }
+    }
+
+    if (passwordInputs.length > 0) {
+      await passwordInputs[0].fill(clave);
+    }
+
+    // También asegurar los campos hidden via JS (por si acaso)
+    await page.evaluate(({ rut, dvVal, rutcntr, claveVal }) => {
+      const set = (sel: string, val: string) => {
+        const el = document.querySelector<HTMLInputElement>(sel);
+        if (el) { el.value = val; el.dispatchEvent(new Event("change", { bubbles: true })); }
+      };
+      set('[name="rut"]', rut);
+      set('[name="dv"]', dvVal);
+      set('[name="rutcntr"]', rutcntr);
+      set('[name="clave"]', claveVal);
+    }, { rut: rutDigitos, dvVal: dv, rutcntr: rutConPuntos, claveVal: clave });
+
+    // Submit
+    await page.evaluate(() => {
+      const btn = document.querySelector<HTMLElement>('input[type="submit"], button[type="submit"]');
+      if (btn) btn.click();
+      else (document.querySelector("form") as HTMLFormElement)?.submit();
+    });
+
+    await page.waitForTimeout(5000);
+
+    const urlFinal = page.url();
+    const cookies = await page.context().cookies();
+    const cookieNames = cookies.map(c => c.name);
+    console.log(`[F29 PW] URL post-login: ${urlFinal}`);
+    console.log(`[F29 PW] Cookies post-login: ${cookieNames.join(", ")}`);
+
+    const hasAuth = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name === "NETSCAPE_LIVEWIRE");
+    if (hasAuth) {
+      console.log(`[F29 PW] Login OK para RUT ${rutDigitos}`);
+      return true;
+    }
+
+    console.error(`[F29 PW] Login falló para RUT ${rutDigitos} — URL: ${urlFinal}`);
+    return false;
+  } catch (e: any) {
+    console.error(`[F29 PW] Error login: ${e.message.substring(0, 150)}`);
+    return false;
+  }
+}
+
+function formatearRutConPuntos(rutDigitos: string): string {
+  const len = rutDigitos.length;
+  if (len <= 3) return rutDigitos;
+  if (len <= 6) return rutDigitos.slice(0, len - 3) + "." + rutDigitos.slice(len - 3);
+  return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
+}
+
 export async function extraerF29Batch(
   siiRut: string,
   siiClaveEnc: string,
@@ -213,15 +275,6 @@ export async function extraerF29Batch(
   const rutDigitos = rutNormalizado.slice(0, -1);
   const dv = rutNormalizado.slice(-1);
 
-  // 1. Login vía fetch (ya funciona, igual que ventas/compras)
-  console.log(`[F29 PW] Login fetch para RUT ${rutDigitos}...`);
-  const cookieStr = await loginSIIFetch(rutDigitos, dv, clave);
-  if (!cookieStr) {
-    console.error(`[F29 PW] Login fetch falló para RUT ${rutDigitos}`);
-    return results;
-  }
-  console.log(`[F29 PW] Login fetch OK para RUT ${rutDigitos}`);
-
   let browser: Browser | null = null;
   try {
     browser = await chromium.launch({
@@ -231,15 +284,16 @@ export async function extraerF29Batch(
     const context = await browser.newContext({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-CL",
+      acceptDownloads: false,
     });
-
-    // 2. Inyectar cookies de sesión en el contexto Playwright
-    await inyectarCookies(context, cookieStr);
-    console.log(`[F29 PW] Cookies inyectadas, navegando GWT para ${periods.length} períodos`);
-
     const page = await context.newPage();
 
-    // 3. Extraer cada período en la misma sesión
+    const loginOk = await loginSIIPlaywright(page, rutDigitos, dv, clave);
+    if (!loginOk) {
+      await context.close();
+      return results;
+    }
+
     for (const period of periods) {
       const f29 = await extraerUnPeriodo(page, rutDigitos, period);
       if (f29) {
@@ -250,6 +304,10 @@ export async function extraerF29Batch(
       }
     }
 
+    // Logout
+    try {
+      await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 10000 });
+    } catch { /* ignorar */ }
     await context.close();
   } catch (e: any) {
     console.error("[F29 PW] Error batch:", e.message.substring(0, 200));
