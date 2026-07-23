@@ -44,7 +44,7 @@ async function logoutSII(cookies: string): Promise<void> {
   } catch { /* ignorar */ }
 }
 
-async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
+export async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
   const baseHeaders: Record<string, string> = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",

@@ -1,6 +1,7 @@
-import { chromium, Browser, Page } from "playwright";
+import { chromium, Browser, Page, BrowserContext } from "playwright";
 import { decrypt } from "./encryption";
 import type { F29SII } from "./siiF29";
+import { loginSII as loginSIIFetch } from "./siiF29";
 
 const MESES_ES: Record<string, string> = {
   "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
@@ -10,13 +11,6 @@ const MESES_ES: Record<string, string> = {
 
 function normalizarRut(rut: string): string {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
-}
-
-function formatearRutConPuntos(rutDigitos: string): string {
-  const len = rutDigitos.length;
-  if (len <= 3) return rutDigitos;
-  if (len <= 6) return rutDigitos.slice(0, len - 3) + "." + rutDigitos.slice(len - 3);
-  return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
 }
 
 function parsearFormCompactoHtml(html: string, period: string): F29SII | null {
@@ -48,77 +42,26 @@ function parsearFormCompactoHtml(html: string, period: string): F29SII | null {
   };
 }
 
-async function setFormField(page: Page, name: string, value: string): Promise<void> {
-  await page.evaluate(({ n, v }) => {
-    const el = document.querySelector<HTMLInputElement>(`[name="${n}"]`);
-    if (el) { el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); }
-  }, { n: name, v: value });
-}
-
-async function submitForm(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const btn = document.querySelector<HTMLInputElement | HTMLButtonElement>('input[type="submit"], button[type="submit"]');
-    if (btn) { btn.click(); return; }
-    const form = document.querySelector("form");
-    if (form) form.submit();
+// Parsea "NAME=value; NAME2=value2" en objetos de cookie para Playwright
+function parseCookieString(cookieStr: string, domain: string): { name: string; value: string; domain: string; path: string }[] {
+  return cookieStr.split(";").map(s => s.trim()).filter(Boolean).flatMap(pair => {
+    const idx = pair.indexOf("=");
+    if (idx < 0) return [];
+    const name = pair.slice(0, idx).trim();
+    const value = pair.slice(idx + 1).trim();
+    if (!name) return [];
+    return [{ name, value, domain, path: "/" }];
   });
 }
 
-function tieneAuth(cookies: { name: string }[]): boolean {
-  return cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name === "NETSCAPE_LIVEWIRE");
-}
-
-async function loginSIIConPlaywright(page: Page, rutDigitos: string, dv: string, clave: string): Promise<boolean> {
-  const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
-
-  // Intento 1: zeusr.sii.cl
-  try {
-    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(1000);
-
-    await setFormField(page, "rut", rutDigitos);
-    await setFormField(page, "dv", dv);
-    await setFormField(page, "rutcntr", rutConPuntos);
-    await setFormField(page, "clave", clave);
-    await setFormField(page, "referencia", "https://homer.sii.cl/");
-    await setFormField(page, "411", "");
-    await submitForm(page);
-    await page.waitForTimeout(4000);
-
-    const cookies = await page.context().cookies();
-    if (tieneAuth(cookies)) {
-      console.log(`[F29 PW] Login OK en zeusr para RUT ${rutDigitos}`);
-      return true;
-    }
-    console.warn(`[F29 PW] zeusr sin cookies auth para RUT ${rutDigitos}, intentando palena`);
-  } catch (e: any) {
-    console.warn(`[F29 PW] zeusr falló para RUT ${rutDigitos}:`, e.message.substring(0, 100));
+async function inyectarCookies(context: BrowserContext, cookieStr: string): Promise<void> {
+  // Inyectar para todos los dominios SII relevantes
+  const dominios = ["zeusr.sii.cl", "homer.sii.cl", "www4.sii.cl", "palena.sii.cl", ".sii.cl"];
+  const cookies: { name: string; value: string; domain: string; path: string }[] = [];
+  for (const dom of dominios) {
+    cookies.push(...parseCookieString(cookieStr, dom));
   }
-
-  // Intento 2: palena.sii.cl
-  try {
-    await page.goto("https://palena.sii.cl/cgi_AUT2000/CAutInicio.cgi", { waitUntil: "domcontentloaded", timeout: 20000 });
-    await page.waitForTimeout(1000);
-
-    await setFormField(page, "rut", rutDigitos);
-    await setFormField(page, "dv", dv);
-    await setFormField(page, "rutcntr", rutConPuntos);
-    await setFormField(page, "clave", clave);
-    await setFormField(page, "referencia", "https://homer.sii.cl/");
-    await submitForm(page);
-    await page.waitForTimeout(4000);
-
-    const cookies2 = await page.context().cookies();
-    if (tieneAuth(cookies2)) {
-      console.log(`[F29 PW] Login OK en palena para RUT ${rutDigitos}`);
-      return true;
-    }
-    console.error(`[F29 PW] palena sin cookies auth para RUT ${rutDigitos}`);
-    return false;
-  } catch (e: any) {
-    console.error(`[F29 PW] palena falló para RUT ${rutDigitos}:`, e.message.substring(0, 100));
-    return false;
-  }
+  await context.addCookies(cookies);
 }
 
 async function extraerUnPeriodo(page: Page, rutDigitos: string, period: string): Promise<F29SII | null> {
@@ -133,78 +76,79 @@ async function extraerUnPeriodo(page: Page, rutDigitos: string, period: string):
       { waitUntil: "domcontentloaded", timeout: 30000 }
     );
 
-    // Esperar a que GWT cargue contenido (buscar texto en la página)
+    // Esperar a que GWT cargue (puede tardar varios segundos)
+    console.log(`[F29 PW] Esperando GWT para ${period}...`);
     try {
-      await page.waitForSelector("table, .gwt-Label, td", { timeout: 15000 });
+      await page.waitForFunction(
+        () => document.querySelectorAll("td, table, .gwt-Label").length > 5,
+        { timeout: 20000 }
+      );
     } catch {
-      console.error(`[F29 PW] GWT no cargó para ${period}`);
+      console.warn(`[F29 PW] GWT tardó demasiado para ${period}`);
     }
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2000);
 
-    // Intentar encontrar el período por texto (año o mes)
+    const htmlInicial = await page.content();
+    console.log(`[F29 PW] HTML ${period} len=${htmlInicial.length}, tiene JS: ${htmlInicial.includes("sifmConsulta")}`);
+
+    // Intentar encontrar el período por texto visible (el año o mes+año)
     const textosBuscados = [
       `${mesNombre} ${anio}`,
       `${mes}/${anio}`,
       `${anio}-${mes}`,
-      `${anio}${mes}`,
       mesNombre,
     ];
 
     let clicked = false;
     for (const texto of textosBuscados) {
-      const el = page.getByText(texto, { exact: false }).first();
-      if (await el.isVisible().catch(() => false)) {
-        await el.click();
-        clicked = true;
-        console.log(`[F29 PW] Click en "${texto}" para ${period}`);
-        break;
-      }
+      try {
+        const el = page.getByText(texto, { exact: false }).first();
+        const visible = await el.isVisible({ timeout: 2000 }).catch(() => false);
+        if (visible) {
+          await el.click();
+          clicked = true;
+          console.log(`[F29 PW] Click en "${texto}" para ${period}`);
+          await page.waitForTimeout(3000);
+          break;
+        }
+      } catch { /* continuar */ }
     }
 
     if (!clicked) {
-      // Intentar interceptar requests XHR del GWT para obtener datos directamente
-      console.error(`[F29 PW] No se encontró el período ${period} en el portal GWT`);
-      return await extraerViaIntercept(page, rutDigitos, period);
+      console.warn(`[F29 PW] No se encontró texto del período ${period} en GWT — intentando via fetch directo`);
+      return await extraerViaFetchDesdePagina(page, rutDigitos, period);
     }
 
-    await page.waitForTimeout(3000);
-
-    // Buscar folio en URL o en la página
+    // Buscar folio en URL actual
     const currentUrl = page.url();
     const folioEnUrl = currentUrl.match(/folio[=\/](\d{6,12})/i);
     if (folioEnUrl) {
-      const folio = folioEnUrl[1];
-      return await fetchFormCompacto(page, folio, rutDigitos, period);
+      return await fetchFormCompacto(page, folioEnUrl[1], rutDigitos, period);
     }
 
-    // Buscar link a formCompacto o verDocumento
+    // Buscar links con folio en la página
     const links = await page.$$eval("a[href]", (els) =>
       els.map(e => (e as HTMLAnchorElement).href).filter(h => h.includes("folio") || h.includes("formCompacto") || h.includes("verDocumento"))
     );
     if (links.length > 0) {
       const folioM = links[0].match(/folio[=\/](\d{6,12})/i);
-      if (folioM) {
-        return await fetchFormCompacto(page, folioM[1], rutDigitos, period);
-      }
+      if (folioM) return await fetchFormCompacto(page, folioM[1], rutDigitos, period);
       await page.goto(links[0], { waitUntil: "domcontentloaded", timeout: 20000 });
-      const html = await page.content();
-      return parsearFormCompactoHtml(html, period);
+      return parsearFormCompactoHtml(await page.content(), period);
     }
 
-    // Extraer datos directamente de la página actual si tiene montos
+    // Intentar parsear la página actual
     const html = await page.content();
     const resultado = parsearFormCompactoHtml(html, period);
     if (resultado) return resultado;
 
-    // Intentar buscar botón "Ver Formulario" o "Ver Detalle"
-    const botones = ["Ver Formulario", "Ver Detalle", "Ver PDF", "Imprimir", "Detalle"];
-    for (const texto of botones) {
+    // Buscar botones de detalle
+    for (const texto of ["Ver Formulario", "Ver Detalle", "Ver PDF", "Imprimir", "Detalle"]) {
       const btn = page.getByText(texto, { exact: false }).first();
-      if (await btn.isVisible().catch(() => false)) {
+      if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
         await btn.click();
         await page.waitForTimeout(2000);
-        const html2 = await page.content();
-        const r2 = parsearFormCompactoHtml(html2, period);
+        const r2 = parsearFormCompactoHtml(await page.content(), period);
         if (r2) return r2;
         break;
       }
@@ -212,7 +156,7 @@ async function extraerUnPeriodo(page: Page, rutDigitos: string, period: string):
 
     return null;
   } catch (e: any) {
-    console.error(`[F29 PW] Error extrayendo período ${period}:`, e.message);
+    console.error(`[F29 PW] Error extrayendo período ${period}:`, e.message.substring(0, 150));
     return null;
   }
 }
@@ -225,21 +169,19 @@ async function fetchFormCompacto(page: Page, folio: string, rutDigitos: string, 
     console.log(`[F29 PW] formCompacto folio=${folio} para ${period}, HTML len=${html.length}`);
     return parsearFormCompactoHtml(html, period);
   } catch (e: any) {
-    console.error(`[F29 PW] Error fetchFormCompacto folio=${folio}:`, e.message);
+    console.error(`[F29 PW] Error fetchFormCompacto folio=${folio}:`, e.message.substring(0, 100));
     return null;
   }
 }
 
-// Intercept: capturar requests XHR del GWT para extraer datos directamente
-async function extraerViaIntercept(page: Page, rutDigitos: string, period: string): Promise<F29SII | null> {
+// Fallback: usa fetch desde dentro del browser (con las cookies ya inyectadas)
+async function extraerViaFetchDesdePagina(page: Page, rutDigitos: string, period: string): Promise<F29SII | null> {
   const anio = period.slice(0, 4);
   const mes = period.slice(4, 6);
 
-  // Intentar endpoint directo de consulta de declaraciones
   const endpoints = [
     `https://www4.sii.cl/sifmConsultaInternet/services/consultaDeclaracionesServlet?rut=${rutDigitos}&periodo=${anio}-${mes}&form=29`,
     `https://www4.sii.cl/sifmConsultaInternet/consultaDeclaracion?rut=${rutDigitos}&anio=${anio}&mes=${mes}`,
-    `https://www4.sii.cl/sifmConsultaInternet/ajax?dest=cifxx&form=29&periodo=${anio}${mes}`,
   ];
 
   for (const url of endpoints) {
@@ -249,29 +191,12 @@ async function extraerViaIntercept(page: Page, rutDigitos: string, period: strin
         return { status: r.status, body: await r.text() };
       }, url);
       if (resp.status === 200 && resp.body.length > 100) {
-        console.log(`[F29 PW] Intercept OK: ${url}`);
+        console.log(`[F29 PW] fetch interno OK ${url.substring(0, 80)}`);
         const f = parsearFormCompactoHtml(resp.body, period);
         if (f) return f;
-        // Intentar parsear JSON
-        try {
-          const json = JSON.parse(resp.body);
-          const d = json?.data ?? json ?? {};
-          const ivaDebito = Number(d.ivaDebito ?? d.iva_debito ?? 0);
-          const ivaCredito = Number(d.ivaCredito ?? d.iva_credito ?? 0);
-          const ivaRemanente = Number(d.ivaRemanente ?? d.iva_remanente ?? 0);
-          if (ivaDebito || ivaCredito) {
-            return {
-              periodo: period, iva_debito: ivaDebito, iva_credito: ivaCredito,
-              iva_remanente: ivaRemanente, iva_neto: Math.max(0, ivaDebito - ivaCredito - ivaRemanente),
-              retencion_honorarios: Number(d.retencionHonorarios ?? 0),
-              ppm: Number(d.ppm ?? 0), total_pagar: Number(d.totalPagar ?? d.total_pagar ?? 0), raw: json,
-            };
-          }
-        } catch { /* no es JSON */ }
       }
     } catch { /* ignorar */ }
   }
-
   return null;
 }
 
@@ -288,6 +213,15 @@ export async function extraerF29Batch(
   const rutDigitos = rutNormalizado.slice(0, -1);
   const dv = rutNormalizado.slice(-1);
 
+  // 1. Login vía fetch (ya funciona, igual que ventas/compras)
+  console.log(`[F29 PW] Login fetch para RUT ${rutDigitos}...`);
+  const cookieStr = await loginSIIFetch(rutDigitos, dv, clave);
+  if (!cookieStr) {
+    console.error(`[F29 PW] Login fetch falló para RUT ${rutDigitos}`);
+    return results;
+  }
+  console.log(`[F29 PW] Login fetch OK para RUT ${rutDigitos}`);
+
   let browser: Browser | null = null;
   try {
     browser = await chromium.launch({
@@ -298,32 +232,27 @@ export async function extraerF29Batch(
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-CL",
     });
+
+    // 2. Inyectar cookies de sesión en el contexto Playwright
+    await inyectarCookies(context, cookieStr);
+    console.log(`[F29 PW] Cookies inyectadas, navegando GWT para ${periods.length} períodos`);
+
     const page = await context.newPage();
 
-    const loginOk = await loginSIIConPlaywright(page, rutDigitos, dv, clave);
-    if (!loginOk) {
-      console.error("[F29 PW] No se pudo autenticar en SII");
-      return results;
-    }
-    console.log(`[F29 PW] Login OK, extrayendo ${periods.length} períodos`);
-
+    // 3. Extraer cada período en la misma sesión
     for (const period of periods) {
       const f29 = await extraerUnPeriodo(page, rutDigitos, period);
       if (f29) {
         results.set(period, f29);
-        console.log(`[F29 PW] Extraído ${period}: IVA débito=${f29.iva_debito}, total=${f29.total_pagar}`);
+        console.log(`[F29 PW] OK ${period}: débito=${f29.iva_debito}, total=${f29.total_pagar}`);
       } else {
         console.warn(`[F29 PW] Sin datos para ${period}`);
       }
     }
 
-    // Logout
-    try {
-      await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 10000 });
-    } catch { /* ignorar */ }
     await context.close();
   } catch (e: any) {
-    console.error("[F29 PW] Error batch:", e.message);
+    console.error("[F29 PW] Error batch:", e.message.substring(0, 200));
   } finally {
     if (browser) await browser.close();
   }
