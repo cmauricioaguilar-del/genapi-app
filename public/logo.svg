@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="290 52 100 120">
+  <polygon points="340,52 390,80 390,136 340,164 290,136 290,80" fill="none" stroke="#c9a84c" stroke-width="2.5"/>
+  <polygon points="340,72 373,91 373,129 340,148 307,129 307,91" fill="#0a1628" stroke="#c9a84c" stroke-width="1.2"/>
+  <circle cx="340" cy="72" r="4" fill="#c9a84c"/>
+  <circle cx="373" cy="91" r="4" fill="#c9a84c"/>
+  <circle cx="373" cy="129" r="4" fill="#c9a84c"/>
+  <circle cx="340" cy="148" r="4" fill="#c9a84c"/>
+  <circle cx="307" cy="129" r="4" fill="#c9a84c"/>
+  <circle cx="307" cy="91" r="4" fill="#c9a84c"/>
+  <circle cx="340" cy="110" r="8" fill="#c9a84c"/>
+  <circle cx="340" cy="110" r="4" fill="#0a1628"/>
+  <line x1="340" y1="110" x2="340" y2="72" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+  <line x1="340" y1="110" x2="373" y2="91" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+  <line x1="340" y1="110" x2="373" y2="129" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+  <line x1="340" y1="110" x2="340" y2="148" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+  <line x1="340" y1="110" x2="307" y2="129" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+  <line x1="340" y1="110" x2="307" y2="91" stroke="#c9a84c" stroke-width="1" opacity="0.6"/>
+</svg>
