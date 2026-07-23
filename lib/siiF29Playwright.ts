@@ -175,60 +175,82 @@ async function obtenerFoliosPorAnio(
   const result = new Map<string, { folio: string; codInt: string }>();
 
   try {
-    // Interceptar todas las respuestas de red para descubrir APIs del GWT
-    const capturedResponses: { url: string; body: string }[] = [];
-    page.on("response", async (response) => {
+    // Interceptar respuestas REST de f29ui para capturar datos de declaraciones
+    const capturedF29: { url: string; body: string }[] = [];
+    const handler = async (response: import("playwright").Response) => {
       const url = response.url();
-      // Ignorar assets estáticos
-      if (/\.(js|css|gif|png|jpg|ico|woff|ttf)(\?|$)/i.test(url)) return;
-      if (url.includes("ruxitagent")) return;
+      if (!url.includes("f29ui") && !url.includes("sifm") && !url.includes("rfi")) return;
+      if (/\.(js|css|gif|png|jpg|ico)(\?|$)/i.test(url)) return;
       try {
         const body = await response.text().catch(() => "");
-        if (body.length > 20) {
-          capturedResponses.push({ url, body: body.substring(0, 1000) });
-        }
+        if (body.length > 10) capturedF29.push({ url, body });
       } catch {}
-    });
+    };
+    page.on("response", handler);
 
-    await page.goto("https://www4.sii.cl/sifmConsultaInternet/internet.html", {
+    // Navegar a la nueva interfaz f29ui (REST, no GWT)
+    await page.goto(`https://www4.sii.cl/f29ui/?rut=${rutDigitos}&anio=${anio}`, {
       waitUntil: "domcontentloaded", timeout: 30000,
     });
-    await page.waitForTimeout(15000); // dar tiempo al GWT para cargar y hacer llamadas
+    await page.waitForTimeout(8000);
 
-    console.log(`[F29 PW] Respuestas de red capturadas: ${capturedResponses.length}`);
-    for (const r of capturedResponses) {
-      console.log(`[F29 PW] NET URL: ${r.url}`);
-      if (r.body.includes("folio") || r.body.includes("codInt") || r.body.includes("F29") || r.body.includes("29")) {
-        console.log(`[F29 PW] NET BODY: ${r.body.substring(0, 500)}`);
-      }
+    console.log(`[F29 PW] f29ui respuestas capturadas: ${capturedF29.length}`);
+    for (const r of capturedF29) {
+      console.log(`[F29 PW] f29ui URL: ${r.url} | ${r.body.substring(0, 300)}`);
     }
 
-    // Intentar llamadas directas a APIs conocidas del SII con fetch autenticado
-    const apisAProbar = [
-      `https://www4.sii.cl/sifmConsultaInternet/ConsultaIntegral?rut=${rutDigitos}&form=29&anio=${anio}`,
-      `https://www4.sii.cl/sifmConsultaInternet/ObtenerDeclaraciones?rut=${rutDigitos}&form=29&anio=${anio}`,
-      `https://www4.sii.cl/sifmConsultaInternet/internet.html?rut=${rutDigitos}&form=29&anio=${anio}`,
-      `https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29&anio=${anio}`,
+    // Intentar APIs REST directas con fetch autenticado (usando cookies de la sesión)
+    const payload = { rutContribuyente: rutDigitos, dvContribuyente: rutDigitos.slice(-1), anio };
+    const endpoints = [
+      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getDeclaraciones", method: "POST", body: JSON.stringify(payload) },
+      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getBandeja", method: "POST", body: JSON.stringify(payload) },
+      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getHistorico", method: "POST", body: JSON.stringify(payload) },
+      { url: `https://www4.sii.cl/f29ui/services/data/facadeService/getDeclaracion?rut=${rutDigitos}&anio=${anio}`, method: "GET", body: null },
     ];
 
-    for (const apiUrl of apisAProbar) {
-      const resp = await page.evaluate(async (url) => {
+    for (const ep of endpoints) {
+      const resp = await page.evaluate(async ({ url, method, body }: { url: string; method: string; body: string | null }) => {
         try {
-          const r = await fetch(url, { credentials: "include" });
-          return { status: r.status, url: r.url, body: await r.text() };
-        } catch (e: any) { return { status: 0, url, body: e.message }; }
-      }, apiUrl);
-      console.log(`[F29 PW] API ${apiUrl} → ${resp.status} (${resp.body.length} chars)`);
-      if (resp.body.includes("folio") || resp.body.includes("codInt")) {
-        console.log(`[F29 PW] API con folios: ${resp.body.substring(0, 500)}`);
+          const r = await fetch(url, {
+            method,
+            credentials: "include",
+            headers: { "Content-Type": "application/json", "Accept": "application/json, text/plain, */*" },
+            ...(body ? { body } : {}),
+          });
+          const text = await r.text().catch(() => "");
+          return { status: r.status, body: text };
+        } catch (e: any) { return { status: 0, body: e.message }; }
+      }, ep);
+      console.log(`[F29 PW] ${ep.method} ${ep.url} → ${resp.status} | ${resp.body.substring(0, 300)}`);
+
+      // Si encontramos folios en la respuesta, parsear
+      if (resp.status === 200 && (resp.body.includes("folio") || resp.body.includes("codInt"))) {
+        try {
+          const json = JSON.parse(resp.body);
+          const items = json?.data ?? json?.declaraciones ?? json ?? [];
+          const arr = Array.isArray(items) ? items : [items];
+          for (const item of arr) {
+            const folio = String(item.folio ?? item.nroFolio ?? "");
+            const codInt = String(item.codInt ?? item.codigoInterno ?? item.codInterno ?? "");
+            const periodoStr: string = String(item.periodo ?? item.periodoTributario ?? item.per ?? "");
+            if (!folio || !periodoStr) continue;
+            const period = periodoStr.replace("-", "").substring(0, 6);
+            if (period.length === 6) {
+              result.set(period, { folio, codInt });
+              console.log(`[F29 PW] Folio desde API: period=${period} folio=${folio} codInt=${codInt}`);
+            }
+          }
+        } catch {}
       }
     }
+
+    page.off("response", handler);
 
   } catch (e: any) {
     console.error(`[F29 PW] Error obtenerFolios: ${e.message.substring(0, 200)}`);
   }
 
-  console.log(`[F29 PW] Folios encontrados para ${anio}: ${result.size}`);
+  console.log(`[F29 PW] Folios encontrados para ${anio}: ${result.size} — ${JSON.stringify([...result.entries()].map(([p, v]) => `${p}:${v.folio}`))}`);
   return result;
 }
 
