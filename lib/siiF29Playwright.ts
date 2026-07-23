@@ -178,60 +178,87 @@ async function obtenerFoliosPorAnio(
     await page.goto("https://www4.sii.cl/sifmConsultaInternet/internet.html", {
       waitUntil: "domcontentloaded", timeout: 30000,
     });
-    await page.waitForTimeout(2000);
 
-    const title = await page.title();
-    console.log(`[F29 PW] internet.html title: "${title}"`);
-
-    // Encontrar el link de la fila F29 para el año actual
-    // La tabla tiene: fila F29 → celdas por año con números clickeables
-    const f29Row = page.locator("tr").filter({ hasText: "F29" }).first();
-    const rowText = await f29Row.textContent().catch(() => "");
-    console.log(`[F29 PW] F29 row texto: ${rowText?.substring(0, 200)}`);
-
-    // Encontrar todos los links dentro de la fila F29
-    const linksEnF29 = await f29Row.locator("a").all();
-    console.log(`[F29 PW] Links en F29 row: ${linksEnF29.length}`);
-
-    let clickedAnio = false;
-    for (const link of linksEnF29) {
-      const href = await link.getAttribute("href") ?? "";
-      const txt = (await link.textContent() ?? "").trim();
-      console.log(`[F29 PW] F29 link: txt="${txt}" href="${href}"`);
-      // El link del año objetivo: href contiene el año o es el número de declaraciones del año
-      if (href.includes(anio) || href.includes(`anio=${anio}`) || href.includes(`periodo=${anio}`)) {
-        await link.click();
-        clickedAnio = true;
+    // Esperar a que la tabla GWT renderice — puede tardar varios segundos
+    console.log(`[F29 PW] Esperando tabla GWT en internet.html...`);
+    let tablaVisible = false;
+    for (let i = 0; i < 10; i++) {
+      await page.waitForTimeout(2000);
+      // Buscar una celda que diga exactamente "29" (número del formulario en la tabla)
+      const celdas = await page.$$eval("td", (tds) =>
+        tds.map(td => td.textContent?.trim() ?? "")
+      );
+      if (celdas.some(t => t === "29" || t === "F-29" || t === "F29")) {
+        tablaVisible = true;
+        console.log(`[F29 PW] Tabla GWT detectada al intento ${i + 1}`);
         break;
       }
     }
 
-    if (!clickedAnio && linksEnF29.length > 0) {
-      // Fallback: hacer click en el primer link de la fila (generalmente es el año más reciente)
-      console.log(`[F29 PW] Haciendo click en primer link F29 row`);
-      await linksEnF29[0].click();
-      clickedAnio = true;
+    if (!tablaVisible) {
+      // Loguear HTML para diagnóstico
+      const html = await page.content();
+      console.error(`[F29 PW] Tabla GWT no apareció. HTML (1000): ${html.substring(0, 1000)}`);
+      return result;
     }
 
-    if (!clickedAnio) {
-      // Intentar click directo en texto del año en la tabla
-      const anioCell = page.locator("table").locator(`text=${anio}`).first();
-      if (await anioCell.isVisible().catch(() => false)) {
-        await anioCell.click();
+    // Encontrar la celda que dice "29" y su fila
+    const f29Row = page.locator("tr").filter({
+      has: page.locator("td", { hasText: /^(F-?29|29)$/ }),
+    }).first();
+
+    const rowText = await f29Row.textContent().catch(() => "");
+    console.log(`[F29 PW] F29 row texto: ${rowText?.substring(0, 300)}`);
+
+    // Buscar links dentro de la fila que tengan solo números (cantidad de declaraciones del año)
+    const celdas = await f29Row.locator("td").all();
+    let clickedAnio = false;
+
+    for (const celda of celdas) {
+      const txt = (await celda.textContent() ?? "").trim();
+      // El año va en el header — buscar la celda con un número pequeño (1-99 declaraciones)
+      const link = celda.locator("a").first();
+      if (!(await link.isVisible().catch(() => false))) continue;
+      const href = await link.getAttribute("href") ?? "";
+      const linkTxt = (await link.textContent() ?? "").trim();
+      console.log(`[F29 PW] Celda F29 row: txt="${txt}" linkTxt="${linkTxt}" href="${href}"`);
+
+      // Buscar celda del año objetivo
+      if (href.includes(anio) || txt.includes(anio)) {
+        await link.click();
         clickedAnio = true;
+        console.log(`[F29 PW] Click en celda del año ${anio}`);
+        break;
       }
     }
 
     if (!clickedAnio) {
-      console.error(`[F29 PW] No se pudo hacer click en año ${anio} de tabla F29`);
+      // Obtener headers de la tabla para saber qué columna es cada año
+      const headers = await page.$$eval("th", ths => ths.map(th => th.textContent?.trim() ?? ""));
+      console.log(`[F29 PW] Headers tabla: ${JSON.stringify(headers)}`);
+
+      // Encontrar índice de columna para el año
+      const colIdx = headers.findIndex(h => h.includes(anio));
+      if (colIdx >= 0) {
+        const linkEnCol = f29Row.locator("td").nth(colIdx).locator("a").first();
+        if (await linkEnCol.isVisible().catch(() => false)) {
+          await linkEnCol.click();
+          clickedAnio = true;
+          console.log(`[F29 PW] Click en columna ${colIdx} (año ${anio})`);
+        }
+      }
+    }
+
+    if (!clickedAnio) {
+      console.error(`[F29 PW] No se encontró celda del año ${anio} en tabla F29`);
       return result;
     }
 
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
     const urlLista = page.url();
     const htmlLista = await page.content();
     console.log(`[F29 PW] URL lista F29: ${urlLista}`);
-    console.log(`[F29 PW] Lista HTML (800): ${htmlLista.substring(0, 800)}`);
+    console.log(`[F29 PW] Lista HTML (1000): ${htmlLista.substring(0, 1000)}`);
 
     // Extraer folio + codInt de los links de la lista
     const allLinks = await page.$$eval("a[href]", els =>
@@ -254,7 +281,7 @@ async function obtenerFoliosPorAnio(
       }
     }
 
-    // Si no encontramos por links, buscar patrones folio= en el HTML
+    // Fallback: buscar patrones folio= en el HTML
     if (result.size === 0) {
       const folioRe = /folio=(\d+)[^"&]*codInt=(\d+)/gi;
       let m;
@@ -264,26 +291,6 @@ async function obtenerFoliosPorAnio(
         if (period && !result.has(period)) {
           console.log(`[F29 PW] Folio desde regex: folio=${m[1]} codInt=${m[2]} period=${period}`);
           result.set(period, { folio: m[1], codInt: m[2] });
-        }
-      }
-    }
-
-    // Alternativa: navegar por cada período clickeando filas de la tabla
-    if (result.size === 0) {
-      console.log(`[F29 PW] Sin folios en links, intentando navegar por filas de tabla`);
-      const rows = await page.$$("table tr");
-      for (const row of rows.slice(1)) { // saltar header
-        const rowText2 = await row.textContent() ?? "";
-        const period = detectarPeriod(rowText2, "", anio);
-        if (!period) continue;
-        const rowLinks = await row.$$("a[href]");
-        if (rowLinks.length === 0) continue;
-        // Hacer click para navegar al detalle
-        const href = await rowLinks[0].getAttribute("href") ?? "";
-        const folioM2 = href.match(/folio=(\d+)/i);
-        const codIntM2 = href.match(/codInt=(\d+)/i);
-        if (folioM2 && codIntM2) {
-          result.set(period, { folio: folioM2[1], codInt: codIntM2[1] });
         }
       }
     }
