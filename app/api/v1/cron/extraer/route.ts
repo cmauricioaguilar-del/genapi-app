@@ -26,12 +26,12 @@ export async function GET(req: NextRequest) {
   for (const empresa of empresas) {
     const resultado: any = { empresa: empresa.nombre, rut: empresa.siiRut, period };
     try {
-      const [rv, rc, rh, rf] = await Promise.all([
-        obtenerOExtraerVentas(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period),
-        obtenerOExtraerCompras(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period),
-        obtenerOExtraerHonorarios(empresa.id, empresa.siiRut, empresa.siiClaveEnc, anio),
-        obtenerOExtraerF29(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period),
-      ]);
+      // Secuencial para evitar múltiples sesiones SII simultáneas por RUT
+      const rv = await obtenerOExtraerVentas(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
+      const rc = await obtenerOExtraerCompras(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
+      const rh = await obtenerOExtraerHonorarios(empresa.id, empresa.siiRut, empresa.siiClaveEnc, anio);
+      const rf = await obtenerOExtraerF29(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
+
       resultado.ventas     = rv.ok ? { ok: true, fromCache: rv.fromCache, total: rv.data?.length ?? 0 } : { ok: false, error: rv.error };
       resultado.compras    = rc.ok ? { ok: true, fromCache: rc.fromCache, total: rc.data?.length ?? 0 } : { ok: false, error: rc.error };
       resultado.honorarios = rh.ok ? { ok: true, fromCache: rh.fromCache, total: rh.data?.length ?? 0 } : { ok: false, error: rh.error };
