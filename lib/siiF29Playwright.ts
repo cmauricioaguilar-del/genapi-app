@@ -175,123 +175,52 @@ async function obtenerFoliosPorAnio(
   const result = new Map<string, { folio: string; codInt: string }>();
 
   try {
+    // Interceptar todas las respuestas de red para descubrir APIs del GWT
+    const capturedResponses: { url: string; body: string }[] = [];
+    page.on("response", async (response) => {
+      const url = response.url();
+      // Ignorar assets estáticos
+      if (/\.(js|css|gif|png|jpg|ico|woff|ttf)(\?|$)/i.test(url)) return;
+      if (url.includes("ruxitagent")) return;
+      try {
+        const body = await response.text().catch(() => "");
+        if (body.length > 20) {
+          capturedResponses.push({ url, body: body.substring(0, 1000) });
+        }
+      } catch {}
+    });
+
     await page.goto("https://www4.sii.cl/sifmConsultaInternet/internet.html", {
       waitUntil: "domcontentloaded", timeout: 30000,
     });
+    await page.waitForTimeout(15000); // dar tiempo al GWT para cargar y hacer llamadas
 
-    // Esperar a que la tabla GWT renderice — puede tardar varios segundos
-    console.log(`[F29 PW] Esperando tabla GWT en internet.html...`);
-    let tablaVisible = false;
-    for (let i = 0; i < 10; i++) {
-      await page.waitForTimeout(2000);
-      // Buscar una celda que diga exactamente "29" (número del formulario en la tabla)
-      const celdas = await page.$$eval("td", (tds) =>
-        tds.map(td => td.textContent?.trim() ?? "")
-      );
-      if (celdas.some(t => t === "29" || t === "F-29" || t === "F29")) {
-        tablaVisible = true;
-        console.log(`[F29 PW] Tabla GWT detectada al intento ${i + 1}`);
-        break;
+    console.log(`[F29 PW] Respuestas de red capturadas: ${capturedResponses.length}`);
+    for (const r of capturedResponses) {
+      console.log(`[F29 PW] NET URL: ${r.url}`);
+      if (r.body.includes("folio") || r.body.includes("codInt") || r.body.includes("F29") || r.body.includes("29")) {
+        console.log(`[F29 PW] NET BODY: ${r.body.substring(0, 500)}`);
       }
     }
 
-    if (!tablaVisible) {
-      // Loguear HTML para diagnóstico
-      const html = await page.content();
-      console.error(`[F29 PW] Tabla GWT no apareció. HTML (1000): ${html.substring(0, 1000)}`);
-      return result;
-    }
+    // Intentar llamadas directas a APIs conocidas del SII con fetch autenticado
+    const apisAProbar = [
+      `https://www4.sii.cl/sifmConsultaInternet/ConsultaIntegral?rut=${rutDigitos}&form=29&anio=${anio}`,
+      `https://www4.sii.cl/sifmConsultaInternet/ObtenerDeclaraciones?rut=${rutDigitos}&form=29&anio=${anio}`,
+      `https://www4.sii.cl/sifmConsultaInternet/internet.html?rut=${rutDigitos}&form=29&anio=${anio}`,
+      `https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29&anio=${anio}`,
+    ];
 
-    // Encontrar la celda que dice "29" y su fila
-    const f29Row = page.locator("tr").filter({
-      has: page.locator("td", { hasText: /^(F-?29|29)$/ }),
-    }).first();
-
-    const rowText = await f29Row.textContent().catch(() => "");
-    console.log(`[F29 PW] F29 row texto: ${rowText?.substring(0, 300)}`);
-
-    // Buscar links dentro de la fila que tengan solo números (cantidad de declaraciones del año)
-    const celdas = await f29Row.locator("td").all();
-    let clickedAnio = false;
-
-    for (const celda of celdas) {
-      const txt = (await celda.textContent() ?? "").trim();
-      // El año va en el header — buscar la celda con un número pequeño (1-99 declaraciones)
-      const link = celda.locator("a").first();
-      if (!(await link.isVisible().catch(() => false))) continue;
-      const href = await link.getAttribute("href") ?? "";
-      const linkTxt = (await link.textContent() ?? "").trim();
-      console.log(`[F29 PW] Celda F29 row: txt="${txt}" linkTxt="${linkTxt}" href="${href}"`);
-
-      // Buscar celda del año objetivo
-      if (href.includes(anio) || txt.includes(anio)) {
-        await link.click();
-        clickedAnio = true;
-        console.log(`[F29 PW] Click en celda del año ${anio}`);
-        break;
-      }
-    }
-
-    if (!clickedAnio) {
-      // Obtener headers de la tabla para saber qué columna es cada año
-      const headers = await page.$$eval("th", ths => ths.map(th => th.textContent?.trim() ?? ""));
-      console.log(`[F29 PW] Headers tabla: ${JSON.stringify(headers)}`);
-
-      // Encontrar índice de columna para el año
-      const colIdx = headers.findIndex(h => h.includes(anio));
-      if (colIdx >= 0) {
-        const linkEnCol = f29Row.locator("td").nth(colIdx).locator("a").first();
-        if (await linkEnCol.isVisible().catch(() => false)) {
-          await linkEnCol.click();
-          clickedAnio = true;
-          console.log(`[F29 PW] Click en columna ${colIdx} (año ${anio})`);
-        }
-      }
-    }
-
-    if (!clickedAnio) {
-      console.error(`[F29 PW] No se encontró celda del año ${anio} en tabla F29`);
-      return result;
-    }
-
-    await page.waitForTimeout(4000);
-    const urlLista = page.url();
-    const htmlLista = await page.content();
-    console.log(`[F29 PW] URL lista F29: ${urlLista}`);
-    console.log(`[F29 PW] Lista HTML (1000): ${htmlLista.substring(0, 1000)}`);
-
-    // Extraer folio + codInt de los links de la lista
-    const allLinks = await page.$$eval("a[href]", els =>
-      els.map(e => ({
-        href: (e as HTMLAnchorElement).href,
-        text: (e as HTMLAnchorElement).closest("tr")?.textContent?.trim() ?? (e as HTMLAnchorElement).textContent?.trim() ?? "",
-      }))
-    );
-
-    for (const lnk of allLinks) {
-      if (!lnk.href.includes("folio") && !lnk.href.includes("formCompacto") && !lnk.href.includes("verDocumento")) continue;
-      const folioM = lnk.href.match(/folio=(\d+)/i);
-      const codIntM = lnk.href.match(/codInt=(\d+)/i);
-      if (!folioM || !codIntM) continue;
-
-      const period = detectarPeriod(lnk.text, lnk.href, anio);
-      console.log(`[F29 PW] Link con folio: folio=${folioM[1]} codInt=${codIntM[1]} period=${period} texto="${lnk.text.substring(0, 80)}"`);
-      if (period && !result.has(period)) {
-        result.set(period, { folio: folioM[1], codInt: codIntM[1] });
-      }
-    }
-
-    // Fallback: buscar patrones folio= en el HTML
-    if (result.size === 0) {
-      const folioRe = /folio=(\d+)[^"&]*codInt=(\d+)/gi;
-      let m;
-      while ((m = folioRe.exec(htmlLista)) !== null) {
-        const ctx = htmlLista.substring(Math.max(0, m.index - 200), m.index + 200);
-        const period = detectarPeriod(ctx, m[0], anio);
-        if (period && !result.has(period)) {
-          console.log(`[F29 PW] Folio desde regex: folio=${m[1]} codInt=${m[2]} period=${period}`);
-          result.set(period, { folio: m[1], codInt: m[2] });
-        }
+    for (const apiUrl of apisAProbar) {
+      const resp = await page.evaluate(async (url) => {
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          return { status: r.status, url: r.url, body: await r.text() };
+        } catch (e: any) { return { status: 0, url, body: e.message }; }
+      }, apiUrl);
+      console.log(`[F29 PW] API ${apiUrl} → ${resp.status} (${resp.body.length} chars)`);
+      if (resp.body.includes("folio") || resp.body.includes("codInt")) {
+        console.log(`[F29 PW] API con folios: ${resp.body.substring(0, 500)}`);
       }
     }
 
@@ -299,7 +228,7 @@ async function obtenerFoliosPorAnio(
     console.error(`[F29 PW] Error obtenerFolios: ${e.message.substring(0, 200)}`);
   }
 
-  console.log(`[F29 PW] Folios encontrados para ${anio}: ${result.size} — ${JSON.stringify([...result.entries()].map(([p, v]) => `${p}:${v.folio}`))}`);
+  console.log(`[F29 PW] Folios encontrados para ${anio}: ${result.size}`);
   return result;
 }
 
