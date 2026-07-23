@@ -37,10 +37,11 @@ export default async function Dashboard() {
     ? await prisma.extraccion.count({ where: { empresaId: { in: empresaIds }, estado: "SUCCESS" } })
     : 0;
 
-  // Última extracción por empresa+modulo
+  // Última extracción por empresa+modulo (excluye módulos obsoletos)
+  const MODULOS_VALIDOS = ["ventas", "compras", "honorarios", "f29"];
   const todasExtracciones = empresaIds.length > 0
     ? await prisma.extraccion.findMany({
-        where: { empresaId: { in: empresaIds } },
+        where: { empresaId: { in: empresaIds }, modulo: { in: MODULOS_VALIDOS } },
         orderBy: { creadoEn: "desc" },
         select: { id: true, empresaId: true, modulo: true, period: true, estado: true, filas: true, errorMsg: true, creadoEn: true },
       })
