@@ -48,34 +48,75 @@ function parsearFormCompactoHtml(html: string, period: string): F29SII | null {
   };
 }
 
+async function setFormField(page: Page, name: string, value: string): Promise<void> {
+  await page.evaluate(({ n, v }) => {
+    const el = document.querySelector<HTMLInputElement>(`[name="${n}"]`);
+    if (el) { el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); }
+  }, { n: name, v: value });
+}
+
+async function submitForm(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const btn = document.querySelector<HTMLInputElement | HTMLButtonElement>('input[type="submit"], button[type="submit"]');
+    if (btn) { btn.click(); return; }
+    const form = document.querySelector("form");
+    if (form) form.submit();
+  });
+}
+
+function tieneAuth(cookies: { name: string }[]): boolean {
+  return cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name === "NETSCAPE_LIVEWIRE");
+}
+
 async function loginSIIConPlaywright(page: Page, rutDigitos: string, dv: string, clave: string): Promise<boolean> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
+  // Intento 1: zeusr.sii.cl
   try {
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.fill('[name="rut"]', rutDigitos);
-    await page.fill('[name="dv"]', dv);
-    await page.fill('[name="rutcntr"]', rutConPuntos);
-    await page.fill('[name="clave"]', clave);
-    await page.click('input[type="submit"], button[type="submit"]');
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1000);
 
-    const url = page.url();
+    await setFormField(page, "rut", rutDigitos);
+    await setFormField(page, "dv", dv);
+    await setFormField(page, "rutcntr", rutConPuntos);
+    await setFormField(page, "clave", clave);
+    await setFormField(page, "referencia", "https://homer.sii.cl/");
+    await setFormField(page, "411", "");
+    await submitForm(page);
+    await page.waitForTimeout(4000);
+
     const cookies = await page.context().cookies();
-    const hasAuth = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name === "NETSCAPE_LIVEWIRE");
-    if (!hasAuth && url.includes("IngresoRutClave")) {
-      console.error("[F29 PW] Login falló en zeusr, intentando palena");
-      await page.goto("https://palena.sii.cl/cgi_AUT2000/CAutInicio.cgi", { waitUntil: "domcontentloaded", timeout: 20000 });
-      await page.fill('[name="rut"]', rutDigitos);
-      await page.fill('[name="clave"]', clave);
-      await page.click('input[type="submit"], button[type="submit"]');
-      await page.waitForTimeout(3000);
-      const cookies2 = await page.context().cookies();
-      return cookies2.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name === "NETSCAPE_LIVEWIRE");
+    if (tieneAuth(cookies)) {
+      console.log(`[F29 PW] Login OK en zeusr para RUT ${rutDigitos}`);
+      return true;
     }
-    return hasAuth;
+    console.warn(`[F29 PW] zeusr sin cookies auth para RUT ${rutDigitos}, intentando palena`);
   } catch (e: any) {
-    console.error("[F29 PW] Error en login:", e.message);
+    console.warn(`[F29 PW] zeusr falló para RUT ${rutDigitos}:`, e.message.substring(0, 100));
+  }
+
+  // Intento 2: palena.sii.cl
+  try {
+    await page.goto("https://palena.sii.cl/cgi_AUT2000/CAutInicio.cgi", { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.waitForTimeout(1000);
+
+    await setFormField(page, "rut", rutDigitos);
+    await setFormField(page, "dv", dv);
+    await setFormField(page, "rutcntr", rutConPuntos);
+    await setFormField(page, "clave", clave);
+    await setFormField(page, "referencia", "https://homer.sii.cl/");
+    await submitForm(page);
+    await page.waitForTimeout(4000);
+
+    const cookies2 = await page.context().cookies();
+    if (tieneAuth(cookies2)) {
+      console.log(`[F29 PW] Login OK en palena para RUT ${rutDigitos}`);
+      return true;
+    }
+    console.error(`[F29 PW] palena sin cookies auth para RUT ${rutDigitos}`);
+    return false;
+  } catch (e: any) {
+    console.error(`[F29 PW] palena falló para RUT ${rutDigitos}:`, e.message.substring(0, 100));
     return false;
   }
 }
