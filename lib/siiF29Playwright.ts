@@ -209,14 +209,17 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
       set('[name="dv"]', dvVal);
     }, { rut: rutDigitos, dvVal: dv });
 
-    // Submit
-    await page.evaluate(() => {
-      const btn = document.querySelector<HTMLElement>('input[type="submit"], button[type="submit"]');
-      if (btn) btn.click();
-      else (document.querySelector("form") as HTMLFormElement)?.submit();
-    });
+    // Submit y esperar redirección (SII redirige a homer.sii.cl tras login exitoso)
+    await Promise.all([
+      page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
+      page.evaluate(() => {
+        const btn = document.querySelector<HTMLElement>('input[type="submit"], button[type="submit"]');
+        if (btn) btn.click();
+        else (document.querySelector("form") as HTMLFormElement)?.submit();
+      }),
+    ]);
 
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(3000);
 
     const urlFinal = page.url();
     const cookies = await page.context().cookies();
@@ -230,10 +233,15 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
       return true;
     }
 
-    console.error(`[F29 PW] Login falló para RUT ${rutDigitos} — URL: ${urlFinal}`);
+    // Aunque no detectemos auth, intentar logout para no dejar sesión abierta
+    console.error(`[F29 PW] Login falló para RUT ${rutDigitos} — URL: ${urlFinal}, cerrando sesión preventivamente`);
+    try { await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000 }); } catch {}
+    try { await page.goto("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", { timeout: 8000 }); } catch {}
     return false;
   } catch (e: any) {
     console.error(`[F29 PW] Error login: ${e.message.substring(0, 150)}`);
+    // Intentar logout preventivo incluso en error
+    try { await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000 }); } catch {}
     return false;
   }
 }
