@@ -13,8 +13,14 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const anio = String(now.getFullYear());
-  const mes = String(now.getMonth() + 1).padStart(2, "0");
-  const period = `${anio}${mes}`;
+  const mesActual = now.getMonth() + 1;
+  const period = `${anio}${String(mesActual).padStart(2, "0")}`;
+
+  // Períodos del año actual hasta el mes actual (para backfill F29)
+  const periodosAnio: string[] = [];
+  for (let m = 1; m <= mesActual; m++) {
+    periodosAnio.push(`${anio}${String(m).padStart(2, "0")}`);
+  }
 
   const empresas = await prisma.empresa.findMany({
     where: { activa: true },
@@ -30,12 +36,25 @@ export async function GET(req: NextRequest) {
       const rv = await obtenerOExtraerVentas(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
       const rc = await obtenerOExtraerCompras(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
       const rh = await obtenerOExtraerHonorarios(empresa.id, empresa.siiRut, empresa.siiClaveEnc, anio);
-      const rf = await obtenerOExtraerF29(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
+
+      // F29: mes actual + backfill de meses anteriores sin registro exitoso
+      const f29Guardados = await prisma.extraccion.findMany({
+        where: { empresaId: empresa.id, modulo: "f29", estado: "SUCCESS", period: { in: periodosAnio } },
+        select: { period: true },
+      });
+      const periodosConF29 = new Set(f29Guardados.map(e => e.period));
+      const periodosFaltantes = periodosAnio.filter(p => !periodosConF29.has(p));
+
+      const f29Results: any[] = [];
+      for (const p of periodosFaltantes) {
+        const rf = await obtenerOExtraerF29(empresa.id, empresa.siiRut, empresa.siiClaveEnc, p);
+        f29Results.push({ period: p, ok: rf.ok, fromCache: rf.fromCache, error: rf.error });
+      }
 
       resultado.ventas     = rv.ok ? { ok: true, fromCache: rv.fromCache, total: rv.data?.length ?? 0 } : { ok: false, error: rv.error };
       resultado.compras    = rc.ok ? { ok: true, fromCache: rc.fromCache, total: rc.data?.length ?? 0 } : { ok: false, error: rc.error };
       resultado.honorarios = rh.ok ? { ok: true, fromCache: rh.fromCache, total: rh.data?.length ?? 0 } : { ok: false, error: rh.error };
-      resultado.f29        = rf.ok ? { ok: true, fromCache: rf.fromCache } : { ok: false, error: rf.error };
+      resultado.f29        = f29Results;
     } catch (e: any) {
       resultado.error = e.message;
     }
