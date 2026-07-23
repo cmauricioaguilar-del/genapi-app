@@ -92,31 +92,35 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
 
   try {
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
-      waitUntil: "networkidle", timeout: 30000,
+      waitUntil: "load", timeout: 30000,
     });
+    await page.waitForTimeout(1500);
 
-    // Campos visibles: rutcntr (texto) y clave (password)
-    await page.locator('[name="rutcntr"]').fill(rutConPuntos);
-    await page.locator('[name="clave"]').fill(clave);
+    // Usar type() con delay para simular tecleo real (dispara keydown/keypress/keyup)
+    // Limpiar primero y luego escribir carácter por carácter
+    const rutField = page.locator('[name="rutcntr"]');
+    await rutField.click();
+    await rutField.selectText().catch(() => {});
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type(rutConPuntos, { delay: 80 });
 
-    // Poblar también campos hidden
-    await page.evaluate(({ rut, dvVal }) => {
-      const set = (sel: string, val: string) => {
-        const el = document.querySelector<HTMLInputElement>(sel);
-        if (el) { el.value = val; el.dispatchEvent(new Event("change", { bubbles: true })); }
-      };
-      set('[name="rut"]', rut);
-      set('[name="dv"]', dvVal);
-    }, { rut: rutDigitos, dvVal: dv });
+    const claveField = page.locator('[name="clave"]');
+    await claveField.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type(clave, { delay: 80 });
+
+    await page.waitForTimeout(500);
+
+    // Verificar qué quedó en rutcntr
+    const rutVal = await rutField.inputValue().catch(() => "?");
+    console.log(`[F29 PW] rutcntr value: "${rutVal}"`);
 
     // Submit esperando navegación
     await Promise.all([
       page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
-      page.evaluate(() => {
-        const btn = document.querySelector<HTMLElement>('input[type="submit"], button[type="submit"]');
-        if (btn) btn.click();
-        else (document.querySelector("form") as HTMLFormElement)?.submit();
-      }),
+      page.locator('input[type="submit"], button[type="submit"]').first().click().catch(() =>
+        page.evaluate(() => (document.querySelector("form") as HTMLFormElement)?.submit())
+      ),
     ]);
 
     await page.waitForTimeout(3000);
@@ -340,11 +344,19 @@ export async function extraerF29Batch(
   try {
     browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+      args: [
+        "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+        "--disable-blink-features=AutomationControlled",
+      ],
     });
     const context = await browser.newContext({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       locale: "es-CL",
+    });
+    // Ocultar navigator.webdriver para evitar detección de headless
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      (window as any).chrome = { runtime: {} };
     });
     const page = await context.newPage();
 
