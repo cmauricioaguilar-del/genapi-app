@@ -37,7 +37,7 @@ async function siFetch(url: string, options: any = {}): Promise<Response> {
   return fetch(url, options);
 }
 
-async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
+export async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
   const baseHeaders: Record<string, string> = {

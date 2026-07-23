@@ -1,7 +1,7 @@
 import { chromium, Browser, Page, BrowserContext } from "playwright";
 import { decrypt } from "./encryption";
 import type { F29SII } from "./siiF29";
-import { loginSII as loginSIIFetch } from "./siiF29";
+import { loginSII as loginSIIFetch } from "./sii";
 
 const MESES_ES: Record<string, string> = {
   "01": "Enero", "02": "Febrero", "03": "Marzo", "04": "Abril",
