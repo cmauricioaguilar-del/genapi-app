@@ -29,6 +29,21 @@ function formatearRutConPuntos(rutDigitos: string): string {
   return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
 }
 
+async function logoutSII(cookies: string): Promise<void> {
+  try {
+    await fetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
+      redirect: "follow",
+    });
+  } catch { /* ignorar */ }
+  try {
+    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://zeusr.sii.cl/", "User-Agent": "Mozilla/5.0" },
+      redirect: "follow",
+    });
+  } catch { /* ignorar */ }
+}
+
 async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
   const baseHeaders: Record<string, string> = {
@@ -95,6 +110,7 @@ export async function extraerF29(siiRut: string, siiClaveEnc: string, period: st
     if (respDeclaracion.ok) {
       const json = await respDeclaracion.json();
       const f29 = parsearF29(json, period);
+      await logoutSII(cookies);
       return { ok: true, f29 };
     }
 
@@ -108,11 +124,13 @@ export async function extraerF29(siiRut: string, siiClaveEnc: string, period: st
     if (!respPropuesta.ok) {
       const body = await respPropuesta.text().catch(() => "");
       console.error(`F29 SII declaracion=${respDeclaracion.status} propuesta=${respPropuesta.status}: ${body.substring(0, 300)}`);
+      await logoutSII(cookies);
       return { ok: false, error: `SII respondió ${respPropuesta.status} al obtener F29` };
     }
 
     const json = await respPropuesta.json();
     const f29 = parsearF29(json, period);
+    await logoutSII(cookies);
     return { ok: true, f29 };
   } catch (e: any) {
     console.error("Error extracción F29 SII:", e);

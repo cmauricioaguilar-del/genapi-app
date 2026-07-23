@@ -104,6 +104,22 @@ async function loginSII(rutDigitos: string, dv: string, clave: string): Promise<
   return null;
 }
 
+async function logoutSII(cookies: string): Promise<void> {
+  try {
+    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
+      method: "GET",
+      headers: {
+        "Cookie": cookies,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://zeusr.sii.cl/",
+      },
+      redirect: "follow",
+    });
+  } catch {
+    // Ignorar errores de logout — lo importante es haber intentado
+  }
+}
+
 async function llamarApiRCV(
   cookies: string,
   rutDigitos: string,
@@ -278,6 +294,9 @@ export async function extraerRCV(
     await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
       headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
     }).catch(() => {});
+    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://zeusr.sii.cl/", "User-Agent": "Mozilla/5.0" },
+    }).catch(() => {});
 
     return { ok: true, ventas, compras };
   } catch (e: any) {
@@ -333,6 +352,9 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
 
     await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
       headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
+    }).catch(() => {});
+    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
+      headers: { "Cookie": cookies, "Referer": "https://zeusr.sii.cl/", "User-Agent": "Mozilla/5.0" },
     }).catch(() => {});
 
     return { ok: true, honorarios };
