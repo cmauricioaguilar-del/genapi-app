@@ -7,7 +7,7 @@ export async function enviarMailRecuperacion(email: string, token: string) {
   const link = `${baseUrl}/recuperar-clave/${token}`;
 
   await resend.emails.send({
-    from: "GENAPI <onboarding@resend.dev>",
+    from: "GENAPI <noreply@genapi.cl>",
     to: email,
     subject: "Recuperación de contraseña — GENAPI",
     html: `
