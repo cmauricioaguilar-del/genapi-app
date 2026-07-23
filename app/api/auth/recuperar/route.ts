@@ -18,17 +18,26 @@ export async function POST(req: NextRequest) {
 
   if (cliente) {
     const token = uuidv4();
-    const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+    const expiraEn = new Date(Date.now() + 60 * 60 * 1000);
 
-    await prisma.tokenRecuperacion.create({
-      data: { email: cliente.email, token, expiraEn },
-    });
+    try {
+      await prisma.tokenRecuperacion.create({
+        data: { email: cliente.email, token, expiraEn },
+      });
+      console.log("[recuperar] Token creado para:", cliente.email);
+    } catch (e) {
+      console.error("[recuperar] Error creando token en DB:", e);
+      return NextResponse.json({ ok: true, mensaje: "Si el email está registrado, recibirás un enlace." });
+    }
 
     try {
       await enviarMailRecuperacion(cliente.email, token);
+      console.log("[recuperar] Mail enviado a:", cliente.email);
     } catch (e) {
-      console.error("Error enviando mail de recuperación:", e);
+      console.error("[recuperar] Error enviando mail SMTP:", e);
     }
+  } else {
+    console.log("[recuperar] Email no encontrado en DB:", email);
   }
 
   return NextResponse.json({
