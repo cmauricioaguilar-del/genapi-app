@@ -109,6 +109,18 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
     await page.keyboard.press("Control+a");
     await page.keyboard.type(clave, { delay: 80 });
 
+    // Forzar campos hidden que el SII espera en el POST (igual que el cliente HTTP)
+    await page.evaluate(({ rut, dv }: { rut: string; dv: string }) => {
+      const setField = (name: string, value: string) => {
+        const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null;
+        if (el) el.value = value;
+      };
+      setField("rut", rut);
+      setField("dv", dv);
+      setField("referencia", "https://homer.sii.cl/");
+      setField("411", "");
+    }, { rut: rutDigitos, dv });
+
     await page.waitForTimeout(500);
 
     // Verificar qué quedó en rutcntr
