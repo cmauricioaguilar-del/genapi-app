@@ -77,3 +77,14 @@ model Admin {
 
   @@map("admins")
 }
+
+model TokenRecuperacion {
+  id       String   @id @default(cuid())
+  email    String
+  token    String   @unique
+  expiraEn DateTime
+  usado    Boolean  @default(false)
+  creadoEn DateTime @default(now())
+
+  @@map("tokens_recuperacion")
+}
