@@ -71,33 +71,47 @@ export async function extraerF29(siiRut: string, siiClaveEnc: string, period: st
     const cookies = await loginSII(rutDigitos, dv, clave);
     if (!cookies) return { ok: false, error: "No se pudo autenticar en el SII." };
 
-    // API de propuesta F29 del SII
     const payload = {
       rutContribuyente: rutDigitos,
       dvContribuyente: dv,
       periodoTributario: `${anio}-${mes}`,
     };
+    const siiHeaders = {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/plain, */*",
+      "Origin": "https://www4.sii.cl",
+      "Referer": "https://www4.sii.cl/f29ui/",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      "Cookie": cookies,
+    };
 
-    const resp = await fetch("https://www4.sii.cl/f29ui/services/data/facadeService/getPropuesta", {
+    // Primero intentar con el endpoint de declaración (F29 ya presentado)
+    const respDeclaracion = await fetch("https://www4.sii.cl/f29ui/services/data/facadeService/getDeclaracion", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www4.sii.cl",
-        "Referer": "https://www4.sii.cl/f29ui/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        "Cookie": cookies,
-      },
+      headers: siiHeaders,
       body: JSON.stringify(payload),
     });
 
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      console.error(`F29 SII HTTP ${resp.status}: ${body.substring(0, 300)}`);
-      return { ok: false, error: `SII respondió ${resp.status} al obtener F29` };
+    if (respDeclaracion.ok) {
+      const json = await respDeclaracion.json();
+      const f29 = parsearF29(json, period);
+      return { ok: true, f29 };
     }
 
-    const json = await resp.json();
+    // Si no hay declaración, intentar con propuesta (mes actual aún no declarado)
+    const respPropuesta = await fetch("https://www4.sii.cl/f29ui/services/data/facadeService/getPropuesta", {
+      method: "POST",
+      headers: siiHeaders,
+      body: JSON.stringify(payload),
+    });
+
+    if (!respPropuesta.ok) {
+      const body = await respPropuesta.text().catch(() => "");
+      console.error(`F29 SII declaracion=${respDeclaracion.status} propuesta=${respPropuesta.status}: ${body.substring(0, 300)}`);
+      return { ok: false, error: `SII respondió ${respPropuesta.status} al obtener F29` };
+    }
+
+    const json = await respPropuesta.json();
     const f29 = parsearF29(json, period);
     return { ok: true, f29 };
   } catch (e: any) {
