@@ -1,24 +1,13 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT ?? 465),
-  secure: Number(process.env.SMTP_PORT ?? 465) === 465,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function enviarMailRecuperacion(email: string, token: string) {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://genapi.cl";
   const link = `${baseUrl}/recuperar-clave/${token}`;
 
-  await transporter.sendMail({
-    from: `"GENAPI" <${process.env.SMTP_USER}>`,
+  await resend.emails.send({
+    from: "GENAPI <onboarding@resend.dev>",
     to: email,
     subject: "Recuperación de contraseña — GENAPI",
     html: `
