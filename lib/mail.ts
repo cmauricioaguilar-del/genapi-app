@@ -1,8 +1,7 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 export async function enviarMailRecuperacion(email: string, token: string) {
+  const resend = new Resend(process.env.RESEND_API_KEY);
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://genapi.cl";
   const link = `${baseUrl}/recuperar-clave/${token}`;
 
