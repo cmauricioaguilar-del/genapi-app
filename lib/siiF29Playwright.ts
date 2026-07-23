@@ -137,7 +137,12 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
       return true;
     }
 
+    // Loguear contenido de la página para diagnosticar el rechazo
+    const pageContent = await page.content().catch(() => "");
+    const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
     console.error(`[F29 PW] Login sin cookies auth — URL: ${urlFinal}`);
+    console.error(`[F29 PW] Página post-login texto (500): ${bodyText.substring(0, 500)}`);
+    console.error(`[F29 PW] Página post-login HTML (800): ${pageContent.substring(0, 800)}`);
   } catch (e: any) {
     console.error(`[F29 PW] Error login: ${e.message.substring(0, 150)}`);
   }
