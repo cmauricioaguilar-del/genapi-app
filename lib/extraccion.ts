@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { extraerRCV, extraerHonorarios, DocumentoSII, HonorarioSII } from "./sii";
 import { extraerF29 } from "./siiF29";
+import { extraerF29Batch } from "./siiF29Playwright";
 import { fireWebhook } from "./webhook";
 
 async function getWebhook(empresaId: string) {
@@ -136,6 +137,91 @@ export async function obtenerOExtraerF29(empresaId: string, siiRut: string, siiC
     notificar(empresaId, "f29", period, "FAILED", 0, extraccion.id, e.message);
     return { ok: false, error: e.message };
   }
+}
+
+export async function obtenerOExtraerF29Batch(
+  empresaId: string,
+  siiRut: string,
+  siiClaveEnc: string,
+  periods: string[]
+): Promise<{ period: string; ok: boolean; fromCache?: boolean; error?: string }[]> {
+  if (periods.length === 0) return [];
+
+  // Verificar cuáles ya están en caché
+  const existentes = await prisma.extraccion.findMany({
+    where: { empresaId, modulo: "f29", estado: "SUCCESS", period: { in: periods } },
+    select: { period: true },
+  });
+  const periodosEnCache = new Set(existentes.map(e => e.period));
+  const periodosFaltantes = periods.filter(p => !periodosEnCache.has(p));
+
+  const resultados: { period: string; ok: boolean; fromCache?: boolean; error?: string }[] = [];
+
+  // Períodos en caché → marcar como fromCache
+  for (const p of periods) {
+    if (periodosEnCache.has(p)) {
+      resultados.push({ period: p, ok: true, fromCache: true });
+    }
+  }
+
+  if (periodosFaltantes.length === 0) return resultados;
+
+  // Crear registros RUNNING para todos los períodos faltantes
+  const extraccionIds = new Map<string, string>();
+  for (const p of periodosFaltantes) {
+    const ext = await prisma.extraccion.create({ data: { empresaId, period: p, modulo: "f29", estado: "RUNNING" } });
+    extraccionIds.set(p, ext.id);
+  }
+
+  // Un solo login + Playwright para todos los períodos faltantes
+  let batchResults: Map<string, import("./siiF29").F29SII>;
+  try {
+    batchResults = await extraerF29Batch(siiRut, siiClaveEnc, periodosFaltantes);
+  } catch (e: any) {
+    // Si Playwright falla completamente, marcar todos como FAILED
+    for (const p of periodosFaltantes) {
+      const extId = extraccionIds.get(p)!;
+      await prisma.extraccion.update({ where: { id: extId }, data: { estado: "FAILED", errorMsg: e.message } });
+      resultados.push({ period: p, ok: false, error: e.message });
+    }
+    return resultados;
+  }
+
+  // Guardar resultados en BD
+  for (const p of periodosFaltantes) {
+    const extId = extraccionIds.get(p)!;
+    const f29 = batchResults.get(p);
+
+    if (!f29) {
+      // Fallback: intentar con getPropuesta (mes actual)
+      const fallback = await extraerF29(siiRut, siiClaveEnc, p);
+      if (fallback.ok && fallback.f29) {
+        const f = fallback.f29;
+        await prisma.f29Genapi.create({
+          data: { extraccionId: extId, empresaId, period: p, ivaDebito: f.iva_debito, ivaCredito: f.iva_credito, ivaRemanente: f.iva_remanente, ivaNeto: f.iva_neto, retencionHonorarios: f.retencion_honorarios, ppm: f.ppm, totalPagar: f.total_pagar, rawData: f.raw },
+        });
+        await prisma.extraccion.update({ where: { id: extId }, data: { estado: "SUCCESS", filas: 1 } });
+        resultados.push({ period: p, ok: true, fromCache: false });
+      } else {
+        const errMsg = `F29 no encontrado para período ${p}`;
+        await prisma.extraccion.update({ where: { id: extId }, data: { estado: "FAILED", errorMsg: errMsg } });
+        resultados.push({ period: p, ok: false, error: errMsg });
+      }
+    } else {
+      try {
+        await prisma.f29Genapi.create({
+          data: { extraccionId: extId, empresaId, period: p, ivaDebito: f29.iva_debito, ivaCredito: f29.iva_credito, ivaRemanente: f29.iva_remanente, ivaNeto: f29.iva_neto, retencionHonorarios: f29.retencion_honorarios, ppm: f29.ppm, totalPagar: f29.total_pagar, rawData: f29.raw },
+        });
+        await prisma.extraccion.update({ where: { id: extId }, data: { estado: "SUCCESS", filas: 1 } });
+        resultados.push({ period: p, ok: true, fromCache: false });
+      } catch (e: any) {
+        await prisma.extraccion.update({ where: { id: extId }, data: { estado: "FAILED", errorMsg: e.message } });
+        resultados.push({ period: p, ok: false, error: e.message });
+      }
+    }
+  }
+
+  return resultados;
 }
 
 async function guardarVentas(extraccionId: string, empresaId: string, period: string, docs: DocumentoSII[]) {

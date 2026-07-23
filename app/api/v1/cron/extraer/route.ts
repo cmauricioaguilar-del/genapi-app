@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { obtenerOExtraerVentas, obtenerOExtraerCompras, obtenerOExtraerHonorarios, obtenerOExtraerF29 } from "@/lib/extraccion";
+import { obtenerOExtraerVentas, obtenerOExtraerCompras, obtenerOExtraerHonorarios, obtenerOExtraerF29Batch } from "@/lib/extraccion";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -37,19 +37,8 @@ export async function GET(req: NextRequest) {
       const rc = await obtenerOExtraerCompras(empresa.id, empresa.siiRut, empresa.siiClaveEnc, period);
       const rh = await obtenerOExtraerHonorarios(empresa.id, empresa.siiRut, empresa.siiClaveEnc, anio);
 
-      // F29: mes actual + backfill de meses anteriores sin registro exitoso
-      const f29Guardados = await prisma.extraccion.findMany({
-        where: { empresaId: empresa.id, modulo: "f29", estado: "SUCCESS", period: { in: periodosAnio } },
-        select: { period: true },
-      });
-      const periodosConF29 = new Set(f29Guardados.map(e => e.period));
-      const periodosFaltantes = periodosAnio.filter(p => !periodosConF29.has(p));
-
-      const f29Results: any[] = [];
-      for (const p of periodosFaltantes) {
-        const rf = await obtenerOExtraerF29(empresa.id, empresa.siiRut, empresa.siiClaveEnc, p);
-        f29Results.push({ period: p, ok: rf.ok, fromCache: rf.fromCache, error: rf.error });
-      }
+      // F29: batch con un solo login Playwright para todos los períodos faltantes
+      const f29Results = await obtenerOExtraerF29Batch(empresa.id, empresa.siiRut, empresa.siiClaveEnc, periodosAnio);
 
       resultado.ventas     = rv.ok ? { ok: true, fromCache: rv.fromCache, total: rv.data?.length ?? 0 } : { ok: false, error: rv.error };
       resultado.compras    = rc.ok ? { ok: true, fromCache: rc.fromCache, total: rc.data?.length ?? 0 } : { ok: false, error: rc.error };
