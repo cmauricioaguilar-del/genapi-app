@@ -195,36 +195,19 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
     );
     console.log(`[F29 PW] Inputs en login page:`, JSON.stringify(inputs));
 
-    // Llenar campos visibles por tipo (no por name, porque los con name son hidden)
-    const textInputs = await page.$$("input[type='text']:visible, input:not([type]):visible");
-    const passwordInputs = await page.$$("input[type='password']:visible");
+    // Llenar los campos visibles directamente por name (ya sabemos que rutcntr y clave son los visibles)
+    await page.locator('[name="rutcntr"]').fill(rutConPuntos);
+    await page.locator('[name="clave"]').fill(clave);
 
-    console.log(`[F29 PW] Visible text inputs: ${textInputs.length}, password inputs: ${passwordInputs.length}`);
-
-    if (textInputs.length > 0) {
-      // El primer campo visible de texto suele ser el RUT
-      await textInputs[0].fill(rutConPuntos);
-      if (textInputs.length > 1) {
-        // Algunos portales tienen campo separado para DV
-        await textInputs[1].fill(dv);
-      }
-    }
-
-    if (passwordInputs.length > 0) {
-      await passwordInputs[0].fill(clave);
-    }
-
-    // También asegurar los campos hidden via JS (por si acaso)
-    await page.evaluate(({ rut, dvVal, rutcntr, claveVal }) => {
+    // Poblar también los campos hidden que el JS del SII normalmente llenaría
+    await page.evaluate(({ rut, dvVal }) => {
       const set = (sel: string, val: string) => {
         const el = document.querySelector<HTMLInputElement>(sel);
         if (el) { el.value = val; el.dispatchEvent(new Event("change", { bubbles: true })); }
       };
       set('[name="rut"]', rut);
       set('[name="dv"]', dvVal);
-      set('[name="rutcntr"]', rutcntr);
-      set('[name="clave"]', claveVal);
-    }, { rut: rutDigitos, dvVal: dv, rutcntr: rutConPuntos, claveVal: clave });
+    }, { rut: rutDigitos, dvVal: dv });
 
     // Submit
     await page.evaluate(() => {
