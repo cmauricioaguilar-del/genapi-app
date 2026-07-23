@@ -11,16 +11,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 
+  // Listar empresas si se pasa ?list=1
+  if (req.nextUrl.searchParams.get("list") === "1") {
+    const empresas = await prisma.empresa.findMany({ select: { id: true, nombre: true, siiRut: true } });
+    return NextResponse.json({ empresas });
+  }
+
   const empresaId = req.nextUrl.searchParams.get("empresaId");
-  if (!empresaId) {
-    return NextResponse.json({ error: "empresaId requerido." }, { status: 400 });
+  const siiRut = req.nextUrl.searchParams.get("rut");
+  if (!empresaId && !siiRut) {
+    return NextResponse.json({ error: "empresaId o rut requerido." }, { status: 400 });
   }
 
   const anio = req.nextUrl.searchParams.get("anio") ?? String(new Date().getFullYear());
   const mesesHasta = parseInt(req.nextUrl.searchParams.get("meses") ?? String(new Date().getMonth() + 1), 10);
 
-  const empresa = await prisma.empresa.findUnique({
-    where: { id: empresaId },
+  const empresa = await prisma.empresa.findFirst({
+    where: empresaId ? { id: empresaId } : { siiRut: siiRut! },
     select: { id: true, nombre: true, siiRut: true, siiClaveEnc: true },
   });
   if (!empresa) return NextResponse.json({ error: "Empresa no encontrada." }, { status: 404 });
