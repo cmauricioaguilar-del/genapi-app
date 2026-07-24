@@ -159,14 +159,12 @@ async function loginSIIPlaywright(page: Page, rutDigitos: string, dv: string, cl
     console.error(`[F29 PW] Error login: ${e.message.substring(0, 150)}`);
   }
 
-  // Siempre intentar logout preventivo para no dejar sesión abierta
-  for (const url of ["https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
-    try { await page.goto(url, { timeout: 8000 }); } catch {}
-  }
+  // Logout preventivo
+  try { await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }); } catch {}
   return false;
 }
 
-// Navega a internet.html y extrae folio+codInt por período del año dado
+// Navega a rfiInternet (consulta F29) e intercepta respuestas para obtener folio+codInt por período
 async function obtenerFoliosPorAnio(
   page: Page,
   rutDigitos: string,
@@ -175,82 +173,77 @@ async function obtenerFoliosPorAnio(
   const result = new Map<string, { folio: string; codInt: string }>();
 
   try {
-    // Interceptar respuestas REST de f29ui para capturar datos de declaraciones
-    const capturedF29: { url: string; body: string }[] = [];
+    // Interceptar todas las respuestas JSON de rfiInternet
+    const capturedResponses: { url: string; body: string }[] = [];
     const handler = async (response: import("playwright").Response) => {
       const url = response.url();
-      if (!url.includes("f29ui") && !url.includes("sifm") && !url.includes("rfi")) return;
-      if (/\.(js|css|gif|png|jpg|ico)(\?|$)/i.test(url)) return;
+      if (!/rfiInternet|f29ui|sifm/i.test(url)) return;
+      if (/\.(js|css|gif|png|jpg|ico|woff|svg)(\?|$)/i.test(url)) return;
       try {
         const body = await response.text().catch(() => "");
-        if (body.length > 10) capturedF29.push({ url, body });
+        if (body.length > 20) capturedResponses.push({ url, body });
       } catch {}
     };
     page.on("response", handler);
 
-    // Navegar a la nueva interfaz f29ui (REST, no GWT)
-    await page.goto(`https://www4.sii.cl/f29ui/?rut=${rutDigitos}&anio=${anio}`, {
-      waitUntil: "domcontentloaded", timeout: 30000,
-    });
-    await page.waitForTimeout(8000);
+    // Navegar al portal rfiInternet de consulta F29
+    await page.goto(
+      `https://www4.sii.cl/rfiInternet/?opcionPagina=ConsultaF29&anio=${anio}`,
+      { waitUntil: "domcontentloaded", timeout: 30000 }
+    );
+    await page.waitForTimeout(6000);
 
-    console.log(`[F29 PW] f29ui respuestas capturadas: ${capturedF29.length}`);
-    for (const r of capturedF29) {
-      console.log(`[F29 PW] f29ui URL: ${r.url} | ${r.body.substring(0, 300)}`);
+    console.log(`[F29 PW] rfiInternet respuestas: ${capturedResponses.length}`);
+    for (const r of capturedResponses.slice(0, 10)) {
+      console.log(`[F29 PW] rfi URL: ${r.url} | ${r.body.substring(0, 400)}`);
     }
 
-    // Intentar APIs REST directas con fetch autenticado (usando cookies de la sesión)
-    const payload = { rutContribuyente: rutDigitos, dvContribuyente: rutDigitos.slice(-1), anio };
-    const endpoints = [
-      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getDeclaraciones", method: "POST", body: JSON.stringify(payload) },
-      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getBandeja", method: "POST", body: JSON.stringify(payload) },
-      { url: "https://www4.sii.cl/f29ui/services/data/facadeService/getHistorico", method: "POST", body: JSON.stringify(payload) },
-      { url: `https://www4.sii.cl/f29ui/services/data/facadeService/getDeclaracion?rut=${rutDigitos}&anio=${anio}`, method: "GET", body: null },
+    // Intentar además llamada directa a la API REST de rfiInternet
+    const apiEndpoints = [
+      `https://www4.sii.cl/rfiInternet/services/declaraciones?rut=${rutDigitos}&anio=${anio}&form=029`,
+      `https://www4.sii.cl/rfiInternet/services/listarDeclaraciones?rut=${rutDigitos}&anio=${anio}`,
+      `https://www4.sii.cl/rfiInternet/consultaEstado?rut=${rutDigitos}&anio=${anio}&form=029`,
     ];
-
-    for (const ep of endpoints) {
-      const resp = await page.evaluate(async ({ url, method, body }: { url: string; method: string; body: string | null }) => {
+    for (const apiUrl of apiEndpoints) {
+      const resp = await page.evaluate(async (u: string) => {
         try {
-          const r = await fetch(url, {
-            method,
-            credentials: "include",
-            headers: { "Content-Type": "application/json", "Accept": "application/json, text/plain, */*" },
-            ...(body ? { body } : {}),
-          });
-          const text = await r.text().catch(() => "");
-          return { status: r.status, body: text };
+          const r = await fetch(u, { credentials: "include", headers: { Accept: "application/json, text/plain, */*" } });
+          return { status: r.status, body: await r.text().catch(() => "") };
         } catch (e: any) { return { status: 0, body: e.message }; }
-      }, ep);
-      console.log(`[F29 PW] ${ep.method} ${ep.url} → ${resp.status} | ${resp.body.substring(0, 300)}`);
-
-      // Si encontramos folios en la respuesta, parsear
-      if (resp.status === 200 && (resp.body.includes("folio") || resp.body.includes("codInt"))) {
-        try {
-          const json = JSON.parse(resp.body);
-          const items = json?.data ?? json?.declaraciones ?? json ?? [];
-          const arr = Array.isArray(items) ? items : [items];
-          for (const item of arr) {
-            const folio = String(item.folio ?? item.nroFolio ?? "");
-            const codInt = String(item.codInt ?? item.codigoInterno ?? item.codInterno ?? "");
-            const periodoStr: string = String(item.periodo ?? item.periodoTributario ?? item.per ?? "");
-            if (!folio || !periodoStr) continue;
-            const period = periodoStr.replace("-", "").substring(0, 6);
-            if (period.length === 6) {
-              result.set(period, { folio, codInt });
-              console.log(`[F29 PW] Folio desde API: period=${period} folio=${folio} codInt=${codInt}`);
-            }
-          }
-        } catch {}
-      }
+      }, apiUrl);
+      console.log(`[F29 PW] GET ${apiUrl} → ${resp.status} | ${resp.body.substring(0, 300)}`);
+      if (resp.status === 200 && resp.body.includes("folio")) capturedResponses.push({ url: apiUrl, body: resp.body });
     }
 
     page.off("response", handler);
+
+    // Parsear todas las respuestas capturadas buscando folio+codInt+periodo
+    for (const r of capturedResponses) {
+      try {
+        const json = JSON.parse(r.body);
+        const items: any[] = Array.isArray(json) ? json
+          : Array.isArray(json?.data) ? json.data
+          : Array.isArray(json?.declaraciones) ? json.declaraciones
+          : [];
+        for (const item of items) {
+          const folio = String(item.folio ?? item.nroFolio ?? item.numeroFolio ?? "");
+          const codInt = String(item.codInt ?? item.codigoInterno ?? item.codInterno ?? "");
+          const periodoStr = String(item.periodo ?? item.periodoTributario ?? item.per ?? item.anioMes ?? "");
+          if (!folio || !periodoStr) continue;
+          const period = periodoStr.replace(/[^0-9]/g, "").substring(0, 6);
+          if (period.length === 6) {
+            result.set(period, { folio, codInt });
+            console.log(`[F29 PW] Folio encontrado: period=${period} folio=${folio} codInt=${codInt}`);
+          }
+        }
+      } catch {}
+    }
 
   } catch (e: any) {
     console.error(`[F29 PW] Error obtenerFolios: ${e.message.substring(0, 200)}`);
   }
 
-  console.log(`[F29 PW] Folios encontrados para ${anio}: ${result.size} — ${JSON.stringify([...result.entries()].map(([p, v]) => `${p}:${v.folio}`))}`);
+  console.log(`[F29 PW] Folios para ${anio}: ${result.size} — ${JSON.stringify([...result.entries()].map(([p, v]) => `${p}:${v.folio}`))}`);
   return result;
 }
 
@@ -359,10 +352,8 @@ export async function extraerF29Batch(
       }
     }
 
-    // Logout — misiir.sii.cl es donde está el botón "Cerrar Sesión" real
-    for (const url of ["https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
-      try { await page.goto(url, { timeout: 8000 }); } catch {}
-    }
+    // Logout — URL real del botón "Cerrar Sesión" en homer.sii.cl
+    try { await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }); } catch {}
     await context.close();
   } catch (e: any) {
     console.error("[F29 PW] Error batch:", e.message.substring(0, 200));
