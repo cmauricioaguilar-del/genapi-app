@@ -110,8 +110,8 @@ export async function GET(req: NextRequest) {
       sesion_activa: sesionActivaAntes,
     };
 
-    // 3. LOGOUT
-    await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
+    // 3. LOGOUT — usar misiir.sii.cl que es donde está el botón "Cerrar Sesión"
+    await page.goto("https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(1000);
     await page.goto("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(2000);

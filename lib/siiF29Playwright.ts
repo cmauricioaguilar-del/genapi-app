@@ -359,8 +359,8 @@ export async function extraerF29Batch(
       }
     }
 
-    // Logout
-    for (const url of ["https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
+    // Logout — misiir.sii.cl es donde está el botón "Cerrar Sesión" real
+    for (const url of ["https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
       try { await page.goto(url, { timeout: 8000 }); } catch {}
     }
     await context.close();
