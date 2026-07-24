@@ -110,13 +110,15 @@ export async function GET(req: NextRequest) {
       sesion_activa: sesionActivaAntes,
     };
 
-    // 3. LOGOUT — ir a misiir.sii.cl y hacer clic en "Cerrar Sesión"
-    await page.goto("https://misiir.sii.cl/", { timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(2000);
+    // 3. LOGOUT — ir a misiir.sii.cl, esperar que la SPA renderice y hacer clic en "Cerrar Sesión"
+    await page.goto("https://misiir.sii.cl/", { timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(3000);
     resultado.url_misiir = page.url();
+    resultado.html_misiir_snippet = (await page.content()).slice(0, 800);
     // Capturar links disponibles para diagnóstico
     resultado.links_misiir = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("a")).map(a => ({ text: a.textContent?.trim().slice(0, 40), href: a.href })).filter(l => l.text)
+      Array.from(document.querySelectorAll("a, button")).map(el => ({ text: el.textContent?.trim().slice(0, 50), tag: el.tagName })).filter(l => l.text)
     );
     // Hacer clic en "Cerrar Sesión"
     const clicked = await page.evaluate(() => {
@@ -129,7 +131,7 @@ export async function GET(req: NextRequest) {
       return null;
     });
     resultado.logout_btn_clicked = clicked;
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
     resultado.url_post_logout = page.url();
 
     // 4. VERIFICAR ACCESO A PÁGINA PROTEGIDA (después del logout)
