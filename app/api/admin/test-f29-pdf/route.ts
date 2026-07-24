@@ -20,21 +20,19 @@ function formatearRutConPuntos(rutDigitos: string): string {
 // Retorna todos los strings del string table y los números del array principal
 function parsearGwtRpc(body: string): { strings: string[]; numeros: number[] } {
   try {
-    // El formato es: //OK[n1,n2,...,nN,[str1,str2,...,strM]]
-    const stripped = body.replace(/^\/\/OK\[/, "").replace(/\]\s*$/, "");
-
-    // El string table es el último elemento: [str1,"str2",...]
-    const strTableMatch = stripped.match(/,\[([^\]]*)\]$/);
-    if (!strTableMatch) return { strings: [], numeros: [] };
-
-    const strTableRaw = strTableMatch[1];
-    const strings = strTableRaw.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-      .map(s => s.replace(/^"|"$/g, ""));
-
-    // Los números son todo lo que viene antes del string table
-    const mainPart = stripped.slice(0, stripped.length - strTableMatch[0].length);
-    const numeros = mainPart.split(",").map(n => parseInt(n, 10)).filter(n => !isNaN(n));
-
+    // Extraer todos los strings entre comillas del cuerpo GWT-RPC
+    const strings: string[] = [];
+    const re = /"((?:[^"\\]|\\.)*)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      strings.push(m[1]);
+    }
+    // Extraer números del array principal (antes del string table)
+    const numeros: number[] = [];
+    const numRe = /\b(\d+)\b/g;
+    while ((m = numRe.exec(body)) !== null) {
+      numeros.push(parseInt(m[1], 10));
+    }
     return { strings, numeros };
   } catch {
     return { strings: [], numeros: [] };
@@ -152,24 +150,34 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. NAVEGAR A CONSULTA INTEGRAL — capturar respuesta COMPLETA de svcConsultaInt
+    // Capturar TODAS las respuestas GWT para diagnóstico
+    const todasGwt: { url: string; len: number; body: string }[] = [];
     let gwtBody = "";
     const gwtHandler = async (response: import("playwright").Response) => {
       const url = response.url();
-      if (url.includes("svcConsultaInt") || url.includes("sdiAAService")) {
+      if (!url.includes("sii.cl")) return;
+      if (/\.(js|css|gif|png|jpg|ico|woff|svg)(\?|$)/i.test(url)) return;
+      try {
         const body = await response.text().catch(() => "");
         if (body.startsWith("//OK")) {
-          gwtBody = body;
-          console.log(`[F29 GWT] Capturado ${url} len=${body.length}`);
+          todasGwt.push({ url, len: body.length, body: body.slice(0, 300) });
+          // Solo sobrescribir con svcConsultaInt (el más largo, con los F29)
+          if (url.includes("svcConsultaInt")) {
+            gwtBody = body;
+            console.log(`[F29 GWT] svcConsultaInt capturado len=${body.length}`);
+          }
         }
-      }
+      } catch {}
     };
     page.on("response", gwtHandler);
 
     await page.goto("https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29", {
       waitUntil: "domcontentloaded", timeout: 30000,
     });
-    await page.waitForTimeout(10000);
+    await page.waitForTimeout(12000);
     page.off("response", gwtHandler);
+
+    resultado.todas_gwt_responses = todasGwt.map(r => ({ url: r.url, len: r.len, sample: r.body.slice(0, 150) }));
 
     resultado.gwt_body_len = gwtBody.length;
     resultado.gwt_body_sample = gwtBody.slice(0, 500);
