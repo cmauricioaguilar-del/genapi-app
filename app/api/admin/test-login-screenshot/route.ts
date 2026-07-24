@@ -110,11 +110,20 @@ export async function GET(req: NextRequest) {
       sesion_activa: sesionActivaAntes,
     };
 
-    // 3. LOGOUT — usar misiir.sii.cl que es donde está el botón "Cerrar Sesión"
-    await page.goto("https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(1000);
-    await page.goto("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(2000);
+    // 3. LOGOUT — navegar a misiir y hacer clic en el botón "Cerrar Sesión"
+    await page.goto("https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForTimeout(1500);
+    resultado.url_pre_click_logout = page.url();
+    resultado.html_logout_snippet = (await page.content()).slice(0, 500);
+    // Intentar hacer clic en el botón "Cerrar Sesión"
+    const clicked = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll("a, button, input[type=submit], input[type=button]"));
+      const btn = btns.find(el => el.textContent?.toLowerCase().includes("cerrar") || (el as HTMLInputElement).value?.toLowerCase().includes("cerrar"));
+      if (btn) { (btn as HTMLElement).click(); return true; }
+      return false;
+    });
+    resultado.logout_btn_clicked = clicked;
+    await page.waitForTimeout(3000);
     resultado.url_post_logout = page.url();
 
     // 4. VERIFICAR ACCESO A PÁGINA PROTEGIDA (después del logout)
