@@ -1,6 +1,6 @@
 FROM node:20-bullseye-slim
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --fix-missing \
     ca-certificates \
     libnss3 \
     libatk-bridge2.0-0 \
