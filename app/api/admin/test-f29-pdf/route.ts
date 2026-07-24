@@ -257,35 +257,40 @@ export async function GET(req: NextRequest) {
       } catch {}
     });
 
-    // Buscar "Enero" usando mouse.click real (GWT requiere eventos reales)
-    const posEnero = await page.evaluate((meses: string[]) => {
+    // Buscar y clickear "Declaración sin observaciones." en la fila de Enero (columna 2026)
+    // Ese es el link real que abre el detalle del F29 con botón "Formulario Compacto"
+    const posDeclaracion = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll("a, td, span, div"));
-      const el = all.find(e => {
-        const t = e.textContent?.trim().toLowerCase() ?? "";
-        return meses.some(m => t === m);
-      });
-      if (!el) return null;
-      const rect = el.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim() };
-    }, ["enero", "ene"]);
-    resultado.pos_enero = posEnero;
+      // Buscar la primera celda con "Declaración" que esté en la misma fila que "Enero"
+      for (const el of all) {
+        const t = el.textContent?.trim().toLowerCase() ?? "";
+        if (t.includes("declaraci") && !t.includes("jurada")) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim()?.slice(0, 60) };
+          }
+        }
+      }
+      return null;
+    });
+    resultado.pos_declaracion = posDeclaracion;
 
     let clickedEnero: string | null = null;
-    if (posEnero) {
-      await page.mouse.click(posEnero.x, posEnero.y);
-      clickedEnero = `mouse_click:enero@(${posEnero.x},${posEnero.y})`;
-      console.log(`[F29] mouse.click Enero en (${posEnero.x}, ${posEnero.y})`);
+    if (posDeclaracion) {
+      await page.mouse.click(posDeclaracion.x, posDeclaracion.y);
+      clickedEnero = `mouse_click:declaracion@(${posDeclaracion.x},${posDeclaracion.y})`;
+      console.log(`[F29] mouse.click Declaracion en (${posDeclaracion.x}, ${posDeclaracion.y})`);
     }
     resultado.click_enero = clickedEnero;
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(8000);
 
     resultado.rfi_urls_after_enero = rfiUrls.slice();
     resultado.popup_urls_after_enero = popupUrls.slice();
 
-    // Textos post-click Enero para diagnóstico
+    // Textos post-click para diagnóstico
     const textosPostEnero = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll("td, a, span, div, button"));
-      return all.map(el => el.textContent?.trim() ?? "").filter(t => t.length > 0 && t.length < 80).slice(0, 80);
+      return all.map(el => el.textContent?.trim() ?? "").filter(t => t.length > 0 && t.length < 100).slice(0, 80);
     }).catch(() => []);
     resultado.textos_post_enero = textosPostEnero;
 
