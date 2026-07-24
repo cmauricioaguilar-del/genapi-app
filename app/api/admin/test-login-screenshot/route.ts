@@ -100,11 +100,11 @@ export async function GET(req: NextRequest) {
     resultado.cookies_auth = cookiesLogin.filter(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE")).map(c => c.name);
 
     // 2. VERIFICAR ACCESO A PÁGINA PROTEGIDA (antes del logout)
-    const respProtegida = await page.goto("https://homer.sii.cl/", {
+    await page.goto("https://misiir.sii.cl/cgi_misii/siihome.cgi", {
       waitUntil: "domcontentloaded", timeout: 10000,
     }).catch(() => null);
     const urlProtegidaAntes = page.url();
-    const sesionActivaAntes = !urlProtegidaAntes.includes("IngresoRutClave") && !urlProtegidaAntes.includes("zeusr");
+    const sesionActivaAntes = !urlProtegidaAntes.includes("IngresoRutClave") && !urlProtegidaAntes.includes("zeusr") && !urlProtegidaAntes.includes("autenticacion");
     resultado.verificacion_antes_logout = {
       url: urlProtegidaAntes,
       sesion_activa: sesionActivaAntes,
@@ -134,11 +134,11 @@ export async function GET(req: NextRequest) {
     resultado.url_post_logout = page.url();
 
     // 4. VERIFICAR ACCESO A PÁGINA PROTEGIDA (después del logout)
-    await page.goto("https://homer.sii.cl/", {
+    await page.goto("https://misiir.sii.cl/cgi_misii/siihome.cgi", {
       waitUntil: "domcontentloaded", timeout: 10000,
     }).catch(() => {});
     const urlProtegidaDespues = page.url();
-    const sesionActivaDespues = !urlProtegidaDespues.includes("IngresoRutClave") && !urlProtegidaDespues.includes("zeusr");
+    const sesionActivaDespues = !urlProtegidaDespues.includes("IngresoRutClave") && !urlProtegidaDespues.includes("zeusr") && !urlProtegidaDespues.includes("autenticacion");
     resultado.verificacion_despues_logout = {
       url: urlProtegidaDespues,
       sesion_activa: sesionActivaDespues,
