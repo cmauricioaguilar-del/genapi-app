@@ -203,21 +203,37 @@ export async function GET(req: NextRequest) {
       return null;
     });
     resultado.click_num = clickedNum;
-    await page.waitForTimeout(5000);
+    // Esperar más tiempo para que GWT re-renderice la tabla de meses
+    await page.waitForTimeout(10000);
+
+    // Dump DOM del frame principal para diagnóstico (completo, hasta 3000 chars)
+    const domPrincipal = await page.evaluate(() => document.body?.innerHTML?.slice(0, 3000) ?? "").catch(() => "");
+    resultado.dom_principal_post_click = domPrincipal;
+
+    // Dump todos los textos visibles para ver qué hay en pantalla
+    const textos = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll("td, a, span, div, button"));
+      return all.map(el => el.textContent?.trim() ?? "").filter(t => t.length > 0 && t.length < 50).slice(0, 100);
+    }).catch(() => []);
+    resultado.textos_visibles = textos;
 
     // Buscar "Enero" en TODOS los frames (GWT puede renderizar en iframes)
     const frames = page.frames();
     resultado.frames_count = frames.length;
     resultado.frames_urls = frames.map(f => f.url());
 
+    // Buscar meses en todos los frames — también buscar variantes
+    const mesesBuscar = ["enero", "ene", "january", "01/2026", "2026-01"];
     let clickedEnero: string | null = null;
     for (const frame of frames) {
       try {
-        const found = await frame.evaluate((mesNombre: string) => {
+        const found = await frame.evaluate((meses: string[]) => {
           const all = Array.from(document.querySelectorAll("a, td, span, div"));
-          const el = all.find(e => e.textContent?.trim().toLowerCase() === mesNombre.toLowerCase());
+          const el = all.find(e => {
+            const t = e.textContent?.trim().toLowerCase() ?? "";
+            return meses.some(m => t === m || t.startsWith(m));
+          });
           if (!el) return null;
-          // Buscar el link/clickable en la misma fila
           const row = el.closest("tr");
           if (row) {
             const links = Array.from(row.querySelectorAll("a[href], td[onclick], span[onclick]"));
@@ -229,14 +245,13 @@ export async function GET(req: NextRequest) {
                 return `clicked_link:${href || onclick}`;
               }
             }
-            // Si no hay link explícito, click en la fila completa
             const cells = Array.from(row.querySelectorAll("td"));
-            const secondCell = cells[1]; // columna 2026
-            if (secondCell) { (secondCell as HTMLElement).click(); return `clicked_cell_2026`; }
+            const secondCell = cells[1];
+            if (secondCell) { (secondCell as HTMLElement).click(); return `clicked_cell_col2`; }
           }
           (el as HTMLElement).click();
-          return `clicked_el:${el.tagName}`;
-        }, "Enero");
+          return `clicked_el:${el.tagName}:${el.textContent?.trim().slice(0, 30)}`;
+        }, mesesBuscar);
         if (found) { clickedEnero = found; break; }
       } catch {}
     }
