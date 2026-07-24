@@ -110,28 +110,27 @@ export async function GET(req: NextRequest) {
       sesion_activa: sesionActivaAntes,
     };
 
-    // 3. LOGOUT — ir a misiir.sii.cl, esperar que la SPA renderice y hacer clic en "Cerrar Sesión"
-    await page.goto("https://misiir.sii.cl/", { timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(3000);
-    resultado.url_misiir = page.url();
-    resultado.html_misiir_snippet = (await page.content()).slice(0, 800);
-    // Capturar links disponibles para diagnóstico
-    resultado.links_misiir = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("a, button")).map(el => ({ text: el.textContent?.trim().slice(0, 50), tag: el.tagName })).filter(l => l.text)
+    // 3. LOGOUT — buscar enlace de logout en homer.sii.cl (donde ya estamos autenticados)
+    await page.goto("https://homer.sii.cl/", { timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+    // Capturar todos los links para diagnóstico
+    resultado.links_homer = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("a")).map(a => ({ text: a.textContent?.trim().slice(0, 50), href: a.href })).filter(l => l.text || l.href)
     );
-    // Hacer clic en "Cerrar Sesión"
+    resultado.html_homer_snippet = (await page.content()).slice(0, 1000);
+    // Intentar clic en logout
     const clicked = await page.evaluate(() => {
-      const all = Array.from(document.querySelectorAll("a, button, input[type=submit], input[type=button]"));
+      const all = Array.from(document.querySelectorAll("a, button, input[type=submit]"));
       const btn = all.find(el => {
-        const t = (el.textContent ?? (el as HTMLInputElement).value ?? "").toLowerCase();
-        return t.includes("cerrar") || t.includes("salir") || t.includes("logout");
+        const t = ((el.textContent ?? "") + " " + ((el as HTMLInputElement).value ?? "") + " " + ((el as HTMLAnchorElement).href ?? "")).toLowerCase();
+        return t.includes("cerrar") || t.includes("salir") || t.includes("logout") || t.includes("termino") || t.includes("término");
       });
-      if (btn) { (btn as HTMLElement).click(); return (btn as HTMLAnchorElement).href || btn.tagName; }
+      if (btn) { (btn as HTMLElement).click(); return (btn as HTMLAnchorElement).href || btn.textContent?.trim() || btn.tagName; }
       return null;
     });
     resultado.logout_btn_clicked = clicked;
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(3000);
     resultado.url_post_logout = page.url();
 
     // 4. VERIFICAR ACCESO A PÁGINA PROTEGIDA (después del logout)
