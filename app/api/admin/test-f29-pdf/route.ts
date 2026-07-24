@@ -203,6 +203,26 @@ export async function GET(req: NextRequest) {
       return null;
     });
     resultado.click_num = clickedNum;
+
+    // Usar mouse.click con coordenadas reales (GWT no responde a evaluate().click())
+    const posNum = await page.evaluate(() => {
+      const tds = Array.from(document.querySelectorAll("td, a, span"));
+      const numEl = tds.find(el => {
+        const t = el.textContent?.trim() ?? "";
+        return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
+      });
+      if (numEl) {
+        const rect = numEl.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: numEl.textContent?.trim() };
+      }
+      return null;
+    });
+    resultado.pos_num = posNum;
+    if (posNum) {
+      await page.mouse.click(posNum.x, posNum.y);
+      console.log(`[F29] mouse.click en (${posNum.x}, ${posNum.y}) texto="${posNum.text}"`);
+    }
+
     // Esperar más tiempo para que GWT re-renderice la tabla de meses
     await page.waitForTimeout(10000);
 
