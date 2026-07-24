@@ -39,7 +39,9 @@ export async function GET(req: NextRequest) {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
   let screenshotB64 = "";
+  let screenshotLogoutB64 = "";
   let urlFinal = "";
+  let urlLogout = "";
   let loginOk = false;
   let error = "";
 
@@ -103,8 +105,12 @@ export async function GET(req: NextRequest) {
 
     // Logout
     for (const url of ["https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
-      try { await page.goto(url, { timeout: 8000 }); } catch {}
+      try { await page.goto(url, { timeout: 8000, waitUntil: "domcontentloaded" }); } catch {}
     }
+    await page.waitForTimeout(2000);
+    urlLogout = page.url();
+    const shotLogout = await page.screenshot({ type: "png", fullPage: false });
+    screenshotLogoutB64 = shotLogout.toString("base64");
     await context.close();
   } catch (e: any) {
     error = e.message;
@@ -113,11 +119,13 @@ export async function GET(req: NextRequest) {
   }
 
   // Devolver HTML con la imagen embebida
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Screenshot SII - ${empresa.nombre}</title></head><body>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Screenshot SII - ${empresa.nombre}</title></head><body style="font-family:sans-serif;padding:16px">
 <h2>Login SII: ${empresa.nombre} (${empresa.siiRut})</h2>
-<p><b>Login OK:</b> ${loginOk} | <b>URL final:</b> ${urlFinal}</p>
 ${error ? `<p style="color:red">Error: ${error}</p>` : ""}
-<img src="data:image/png;base64,${screenshotB64}" style="max-width:100%;border:1px solid #ccc;" />
+<h3>1. Después del login — URL: ${urlFinal} | Login OK: ${loginOk}</h3>
+<img src="data:image/png;base64,${screenshotB64}" style="max-width:100%;border:1px solid #ccc;display:block;margin-bottom:24px" />
+<h3>2. Después del logout — URL: ${urlLogout}</h3>
+<img src="data:image/png;base64,${screenshotLogoutB64}" style="max-width:100%;border:1px solid #ccc;display:block" />
 </body></html>`;
 
   return new NextResponse(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
