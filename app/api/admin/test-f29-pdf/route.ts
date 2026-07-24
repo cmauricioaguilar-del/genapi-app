@@ -16,6 +16,67 @@ function formatearRutConPuntos(rutDigitos: string): string {
   return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
 }
 
+// Parsea el string table de una respuesta GWT-RPC //OK[..., [...strings...]]
+// Retorna todos los strings del string table y los números del array principal
+function parsearGwtRpc(body: string): { strings: string[]; numeros: number[] } {
+  try {
+    // El formato es: //OK[n1,n2,...,nN,[str1,str2,...,strM]]
+    const stripped = body.replace(/^\/\/OK\[/, "").replace(/\]\s*$/, "");
+
+    // El string table es el último elemento: [str1,"str2",...]
+    const strTableMatch = stripped.match(/,\[([^\]]*)\]$/);
+    if (!strTableMatch) return { strings: [], numeros: [] };
+
+    const strTableRaw = strTableMatch[1];
+    const strings = strTableRaw.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+      .map(s => s.replace(/^"|"$/g, ""));
+
+    // Los números son todo lo que viene antes del string table
+    const mainPart = stripped.slice(0, stripped.length - strTableMatch[0].length);
+    const numeros = mainPart.split(",").map(n => parseInt(n, 10)).filter(n => !isNaN(n));
+
+    return { strings, numeros };
+  } catch {
+    return { strings: [], numeros: [] };
+  }
+}
+
+// Extrae posibles folios y períodos del string table GWT
+function extraerFoliosPorPeriodo(strings: string[]): Map<string, { folio: string; codInt: string }> {
+  const result = new Map<string, { folio: string; codInt: string }>();
+
+  // Buscar strings que parezcan períodos YYYYMM (ej: "202601", "202501")
+  // y strings que parezcan folios (números de 8-12 dígitos)
+  const periodos = strings.filter(s => /^20\d{2}(0[1-9]|1[0-2])$/.test(s));
+  const folios = strings.filter(s => /^\d{8,12}$/.test(s));
+
+  console.log(`[F29 GWT] Períodos encontrados en string table: ${JSON.stringify(periodos)}`);
+  console.log(`[F29 GWT] Posibles folios: ${JSON.stringify(folios)}`);
+
+  // Intentar asociar cada período con un folio buscando proximidad en el string table
+  for (const periodo of periodos) {
+    const idxPeriodo = strings.indexOf(periodo);
+    // Buscar folio cercano (±5 posiciones)
+    let folio = "";
+    let codInt = "";
+    for (let offset = -5; offset <= 5; offset++) {
+      const candidate = strings[idxPeriodo + offset];
+      if (candidate && /^\d{8,12}$/.test(candidate) && candidate !== periodo) {
+        if (!folio) folio = candidate;
+      }
+      if (candidate && /^[A-Z0-9]{1,10}$/.test(candidate) && candidate !== periodo && candidate !== folio) {
+        if (!codInt) codInt = candidate;
+      }
+    }
+    if (folio) {
+      result.set(periodo, { folio, codInt });
+      console.log(`[F29 GWT] Período ${periodo} → folio=${folio} codInt=${codInt}`);
+    }
+  }
+
+  return result;
+}
+
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (secret !== (process.env.CRON_SECRET ?? "")) {
@@ -23,7 +84,7 @@ export async function GET(req: NextRequest) {
   }
 
   const empresaId = req.nextUrl.searchParams.get("empresaId");
-  const period = req.nextUrl.searchParams.get("period") ?? "202601"; // YYYYMM
+  const period = req.nextUrl.searchParams.get("period") ?? "202601";
   if (!empresaId) return NextResponse.json({ error: "empresaId requerido." }, { status: 400 });
 
   const empresa = await prisma.empresa.findUnique({
@@ -37,9 +98,6 @@ export async function GET(req: NextRequest) {
   const rutDigitos = rutNorm.slice(0, -1);
   const dv = rutNorm.slice(-1);
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
-
-  const anio = period.slice(0, 4);
-  const mes = parseInt(period.slice(4, 6), 10);
 
   const resultado: Record<string, any> = { empresa: empresa.nombre, period };
 
@@ -70,7 +128,10 @@ export async function GET(req: NextRequest) {
     await page.keyboard.press("Control+a");
     await page.keyboard.type(clave, { delay: 80 });
     await page.evaluate(({ rut, dv }: { rut: string; dv: string }) => {
-      const set = (name: string, val: string) => { const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null; if (el) el.value = val; };
+      const set = (name: string, val: string) => {
+        const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null;
+        if (el) el.value = val;
+      };
       set("rut", rut); set("dv", dv); set("referencia", "https://homer.sii.cl/"); set("411", "");
     }, { rut: rutDigitos, dv });
     await page.waitForTimeout(500);
@@ -90,139 +151,95 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ...resultado, error: "Login fallido" });
     }
 
-    // 2. NAVEGAR A CONSULTA INTEGRAL F29 — interceptar respuestas de red
-    const interceptadas: { url: string; body: string }[] = [];
-    page.on("response", async (response) => {
+    // 2. NAVEGAR A CONSULTA INTEGRAL — capturar respuesta COMPLETA de svcConsultaInt
+    let gwtBody = "";
+    const gwtHandler = async (response: import("playwright").Response) => {
       const url = response.url();
-      if (/\.(js|css|gif|png|jpg|ico|woff|svg)(\?|$)/i.test(url)) return;
-      if (!url.includes("sii.cl")) return;
-      try {
+      if (url.includes("svcConsultaInt") || url.includes("sdiAAService")) {
         const body = await response.text().catch(() => "");
-        if (body.length > 50) interceptadas.push({ url, body: body.slice(0, 600) });
-      } catch {}
-    });
+        if (body.startsWith("//OK")) {
+          gwtBody = body;
+          console.log(`[F29 GWT] Capturado ${url} len=${body.length}`);
+        }
+      }
+    };
+    page.on("response", gwtHandler);
 
     await page.goto("https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29", {
       waitUntil: "domcontentloaded", timeout: 30000,
     });
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(10000);
+    page.off("response", gwtHandler);
 
-    resultado.url_consulta = page.url();
-    resultado.interceptadas_count = interceptadas.length;
-    resultado.interceptadas_sample = interceptadas.slice(0, 5).map(r => ({ url: r.url, body: r.body.slice(0, 200) }));
-    resultado.html_snippet = (await page.content()).slice(0, 800);
+    resultado.gwt_body_len = gwtBody.length;
+    resultado.gwt_body_sample = gwtBody.slice(0, 500);
 
-    // 3. BUSCAR Y CLICK EN EL NÚMERO DE DECLARACIONES DEL AÑO
-    // La tabla GWT muestra el año y un número clickeable
-    const clickAnio = await page.evaluate((anio: string) => {
-      // Buscar cualquier celda que sea un enlace con el año en la misma fila
-      const links = Array.from(document.querySelectorAll("a, td, span"));
-      const numeros = links.filter(el => {
-        const t = el.textContent?.trim() ?? "";
-        return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
-      });
-      resultado_debug: { return numeros.map(el => ({ tag: el.tagName, text: el.textContent?.trim(), class: el.className })); }
-    }, anio);
-    resultado.elementos_numericos = clickAnio;
+    // 3. PARSEAR GWT-RPC
+    const { strings, numeros } = parsearGwtRpc(gwtBody);
+    resultado.gwt_strings_count = strings.length;
+    resultado.gwt_strings_all = strings; // todos para diagnóstico
+    resultado.gwt_numeros_sample = numeros.slice(0, 30);
 
-    // Intentar click en el número bajo el año correspondiente
-    const clickedNum = await page.evaluate((anio: string) => {
-      const tds = Array.from(document.querySelectorAll("td, th"));
-      const anioTd = tds.find(td => td.textContent?.trim() === anio);
-      if (!anioTd) return "no_encontrado_anio";
-      // El número de declaraciones está en la misma columna, fila siguiente
-      const colIndex = Array.from(anioTd.parentElement?.children ?? []).indexOf(anioTd);
-      const tbody = anioTd.closest("table")?.querySelector("tbody");
-      if (!tbody) return "no_tbody";
-      for (const row of Array.from(tbody.querySelectorAll("tr"))) {
-        const cells = Array.from(row.querySelectorAll("td"));
-        const cell = cells[colIndex];
-        if (cell) {
-          const link = cell.querySelector("a") ?? cell;
-          if (/^\d+$/.test(link.textContent?.trim() ?? "")) {
-            (link as HTMLElement).click();
-            return `clicked:${link.textContent?.trim()}`;
+    const foliosPorPeriodo = extraerFoliosPorPeriodo(strings);
+    resultado.folios_encontrados = Object.fromEntries(foliosPorPeriodo);
+
+    // 4. DESCARGAR PDF DEL PERÍODO SOLICITADO
+    const folioData = foliosPorPeriodo.get(period);
+    if (!folioData) {
+      resultado.error_pdf = `No se encontró folio para período ${period}`;
+      resultado.todos_periodos = [...foliosPorPeriodo.keys()];
+    } else {
+      const { folio, codInt } = folioData;
+      resultado.folio = folio;
+      resultado.codInt = codInt;
+
+      // Intentar descargar el PDF via formCompacto
+      const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folio}&rut=${rutDigitos}&form=029&codInt=${codInt}`;
+      resultado.pdf_url = pdfUrl;
+
+      // Interceptar la respuesta PDF
+      let pdfBytes: Buffer | null = null;
+      const pdfHandler = async (response: import("playwright").Response) => {
+        const url = response.url();
+        if (url.includes("formCompacto") || url.includes("rfiInternet")) {
+          const ct = response.headers()["content-type"] ?? "";
+          if (ct.includes("pdf") || ct.includes("octet")) {
+            const buf = await response.body().catch(() => null);
+            if (buf) pdfBytes = buf;
           }
         }
-      }
-      return "no_numero_en_columna";
-    }, anio);
-    resultado.click_anio = clickedNum;
-    await page.waitForTimeout(5000);
+      };
+      page.on("response", pdfHandler);
 
-    resultado.html_after_click = (await page.content()).slice(0, 1200);
+      await page.goto(pdfUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(3000);
+      page.off("response", pdfHandler);
 
-    // 4. BUSCAR MES Y CLICK EN CHECKMARK
-    const MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-      "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
-    const mesNombre = MESES[mes];
-    resultado.mes_buscado = mesNombre;
+      resultado.pdf_url_final = page.url();
+      resultado.pdf_content_type = (await page.evaluate(() => document.contentType).catch(() => ""));
+      resultado.pdf_bytes_capturados = pdfBytes ? (pdfBytes as Buffer).length : 0;
+      resultado.page_html_snippet = (await page.content()).slice(0, 500);
 
-    const clickMes = await page.evaluate((mesNombre: string) => {
-      const links = Array.from(document.querySelectorAll("a, td"));
-      const mesEl = links.find(el => el.textContent?.trim().toLowerCase().startsWith(mesNombre.toLowerCase()));
-      if (!mesEl) return "no_encontrado_mes";
-      // Buscar el visto (imagen, link, o td clickeable) en la misma fila
-      const row = mesEl.closest("tr");
-      if (!row) return "no_row";
-      const clickables = Array.from(row.querySelectorAll("a, img, td[onclick]"));
-      for (const el of clickables) {
-        const href = (el as HTMLAnchorElement).href ?? "";
-        const onclick = (el as HTMLElement).getAttribute("onclick") ?? "";
-        if (href || onclick) {
-          (el as HTMLElement).click();
-          return `clicked_en_fila_${mesNombre}:${href || onclick}`;
-        }
-      }
-      // Si no hay link/onclick, click en la fila directamente
-      (row as HTMLElement).click();
-      return `clicked_row_${mesNombre}`;
-    }, mesNombre);
-    resultado.click_mes = clickMes;
-    await page.waitForTimeout(5000);
-
-    resultado.html_after_mes = (await page.content()).slice(0, 1200);
-
-    // 5. BUSCAR BOTÓN "FORMULARIO COMPACTO" Y CLICK — capturar popup
-    const popupPromise = context.waitForEvent("page", { timeout: 15000 }).catch(() => null);
-    const clickFormCompacto = await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"));
-      const btn = btns.find(el => {
-        const t = (el.textContent ?? (el as HTMLInputElement).value ?? "").toLowerCase();
-        return t.includes("compacto") || t.includes("formulario");
-      });
-      if (!btn) return null;
-      (btn as HTMLElement).click();
-      return (btn as HTMLAnchorElement).href || btn.textContent?.trim() || "clicked";
-    });
-    resultado.click_formulario_compacto = clickFormCompacto;
-
-    const popup = await popupPromise;
-    if (popup) {
-      await popup.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
-      await popup.waitForTimeout(3000);
-      resultado.popup_url = popup.url();
-      resultado.popup_html_snippet = (await popup.content()).slice(0, 800);
-
-      // Intentar descargar el PDF via fetch desde el popup
-      const pdfUrl = popup.url();
-      if (pdfUrl && pdfUrl !== "about:blank") {
-        const pdfBuffer = await page.evaluate(async (url: string) => {
+      if (pdfBytes && (pdfBytes as Buffer).length > 1000) {
+        resultado.pdf_ok = true;
+        resultado.pdf_inicio = (pdfBytes as Buffer).slice(0, 4).toString("ascii"); // "%PDF" si es PDF real
+      } else {
+        // Intentar fetch directo desde el contexto autenticado
+        const fetchResult = await page.evaluate(async (url: string) => {
           try {
             const r = await fetch(url, { credentials: "include" });
+            const ct = r.headers.get("content-type") ?? "";
             const ab = await r.arrayBuffer();
-            return { ok: true, size: ab.byteLength, base64: btoa(String.fromCharCode(...new Uint8Array(ab).slice(0, 100))) };
-          } catch (e: any) { return { ok: false, error: e.message }; }
+            const bytes = new Uint8Array(ab);
+            const inicio = String.fromCharCode(...bytes.slice(0, 4));
+            return { status: r.status, ct, size: ab.byteLength, inicio };
+          } catch (e: any) { return { error: e.message }; }
         }, pdfUrl);
-        resultado.pdf_fetch = pdfBuffer;
+        resultado.pdf_fetch_directo = fetchResult;
       }
-      await popup.close().catch(() => {});
-    } else {
-      resultado.popup = "no_abierto";
-      resultado.html_after_compacto = (await page.content()).slice(0, 1200);
     }
 
-    // 6. LOGOUT
+    // 5. LOGOUT
     await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
     await context.close();
   } catch (e: any) {
