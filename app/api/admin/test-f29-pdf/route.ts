@@ -242,19 +242,36 @@ export async function GET(req: NextRequest) {
     resultado.frames_count = frames.length;
     resultado.frames_urls = frames.map(f => f.url());
 
-    // Escuchar popups/nuevas ventanas para capturar URL rfiInternet
+    // Escuchar popups/nuevas ventanas — capturar URL final y bytes de PDF
     const popupUrls: string[] = [];
+    let pdfBytesPopup: Buffer | null = null;
     context.on("page", async (newPage) => {
-      const url = newPage.url();
-      popupUrls.push(url);
-      console.log(`[F29 POPUP] Nueva ventana: ${url}`);
-      // Esperar a que navegue a la URL final
+      console.log(`[F29 POPUP] Nueva ventana abierta`);
       try {
-        await newPage.waitForLoadState("domcontentloaded", { timeout: 10000 });
+        // Interceptar respuestas PDF en el popup
+        newPage.on("response", async (resp) => {
+          const ct = resp.headers()["content-type"] ?? "";
+          const u = resp.url();
+          if (ct.includes("pdf") || ct.includes("octet") || u.includes("formCompacto")) {
+            const buf = await resp.body().catch(() => null);
+            if (buf && buf.length > 500) {
+              pdfBytesPopup = buf;
+              console.log(`[F29 POPUP] PDF capturado desde popup len=${buf.length}`);
+            }
+          }
+        });
+        // Esperar a que navegue a rfiInternet
+        await newPage.waitForURL(/rfiInternet|formCompacto/, { timeout: 15000 }).catch(() => {});
         const finalUrl = newPage.url();
-        if (finalUrl !== url) popupUrls.push(finalUrl);
+        popupUrls.push(finalUrl);
         console.log(`[F29 POPUP] URL final: ${finalUrl}`);
-      } catch {}
+        // Esperar que cargue el PDF
+        await newPage.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+        await newPage.waitForTimeout(3000);
+      } catch (e: any) {
+        popupUrls.push(newPage.url());
+        console.log(`[F29 POPUP] Error: ${e.message}`);
+      }
     });
 
     // Buscar el checkmark/celda de "Enero 2026" — puede ser img con title, td con title, o div con text
@@ -365,22 +382,31 @@ export async function GET(req: NextRequest) {
       const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioCapturado}&rut=${rutDigitos}&form=029&codInt=${codIntCapturado}`;
       resultado.pdf_url = pdfUrl;
 
-      let pdfBytes: Buffer | null = null;
-      const pdfHandler = async (response: import("playwright").Response) => {
-        const ct = response.headers()["content-type"] ?? "";
-        if (ct.includes("pdf") || ct.includes("octet")) {
-          const buf = await response.body().catch(() => null);
-          if (buf && buf.length > 500) pdfBytes = buf;
-        }
-      };
-      page.on("response", pdfHandler);
-      await page.goto(pdfUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-      await page.waitForTimeout(3000);
-      page.off("response", pdfHandler);
+      // Si el popup ya capturó el PDF, usarlo; si no, intentar descarga directa
+      await page.waitForTimeout(2000); // dar tiempo al popup para cargar
+      let pdfBytes: Buffer | null = pdfBytesPopup;
+
+      if (!pdfBytes) {
+        // Descarga directa con las cookies de sesión actuales
+        const pdfHandler = async (response: import("playwright").Response) => {
+          const ct = response.headers()["content-type"] ?? "";
+          const u = response.url();
+          if (ct.includes("pdf") || ct.includes("octet") || u.includes("formCompacto")) {
+            const buf = await response.body().catch(() => null);
+            if (buf && buf.length > 500) pdfBytes = buf;
+          }
+        };
+        page.on("response", pdfHandler);
+        await page.goto(pdfUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(4000);
+        page.off("response", pdfHandler);
+      }
 
       resultado.pdf_bytes = pdfBytes ? (pdfBytes as Buffer).length : 0;
       resultado.pdf_inicio = pdfBytes ? (pdfBytes as Buffer).slice(0, 4).toString("ascii") : "";
       resultado.pdf_ok = resultado.pdf_inicio === "%PDF";
+      resultado.pdf_from_popup = !!pdfBytesPopup;
+      resultado.popup_urls_final = popupUrls;
     } else {
       // Diagnóstico: mostrar DOM de todos los frames para entender la estructura
       resultado.frames_dom = [];
