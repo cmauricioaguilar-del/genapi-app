@@ -242,48 +242,58 @@ export async function GET(req: NextRequest) {
     resultado.frames_count = frames.length;
     resultado.frames_urls = frames.map(f => f.url());
 
-    // Buscar meses en todos los frames — también buscar variantes
-    const mesesBuscar = ["enero", "ene", "january", "01/2026", "2026-01"];
-    let clickedEnero: string | null = null;
-    for (const frame of frames) {
+    // Escuchar popups/nuevas ventanas para capturar URL rfiInternet
+    const popupUrls: string[] = [];
+    context.on("page", async (newPage) => {
+      const url = newPage.url();
+      popupUrls.push(url);
+      console.log(`[F29 POPUP] Nueva ventana: ${url}`);
+      // Esperar a que navegue a la URL final
       try {
-        const found = await frame.evaluate((meses: string[]) => {
-          const all = Array.from(document.querySelectorAll("a, td, span, div"));
-          const el = all.find(e => {
-            const t = e.textContent?.trim().toLowerCase() ?? "";
-            return meses.some(m => t === m || t.startsWith(m));
-          });
-          if (!el) return null;
-          const row = el.closest("tr");
-          if (row) {
-            const links = Array.from(row.querySelectorAll("a[href], td[onclick], span[onclick]"));
-            for (const link of links) {
-              const href = (link as HTMLAnchorElement).href ?? "";
-              const onclick = link.getAttribute("onclick") ?? "";
-              if (href.includes("rfi") || href.includes("sifm") || onclick) {
-                (link as HTMLElement).click();
-                return `clicked_link:${href || onclick}`;
-              }
-            }
-            const cells = Array.from(row.querySelectorAll("td"));
-            const secondCell = cells[1];
-            if (secondCell) { (secondCell as HTMLElement).click(); return `clicked_cell_col2`; }
-          }
-          (el as HTMLElement).click();
-          return `clicked_el:${el.tagName}:${el.textContent?.trim().slice(0, 30)}`;
-        }, mesesBuscar);
-        if (found) { clickedEnero = found; break; }
+        await newPage.waitForLoadState("domcontentloaded", { timeout: 10000 });
+        const finalUrl = newPage.url();
+        if (finalUrl !== url) popupUrls.push(finalUrl);
+        console.log(`[F29 POPUP] URL final: ${finalUrl}`);
       } catch {}
+    });
+
+    // Buscar "Enero" usando mouse.click real (GWT requiere eventos reales)
+    const posEnero = await page.evaluate((meses: string[]) => {
+      const all = Array.from(document.querySelectorAll("a, td, span, div"));
+      const el = all.find(e => {
+        const t = e.textContent?.trim().toLowerCase() ?? "";
+        return meses.some(m => t === m);
+      });
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim() };
+    }, ["enero", "ene"]);
+    resultado.pos_enero = posEnero;
+
+    let clickedEnero: string | null = null;
+    if (posEnero) {
+      await page.mouse.click(posEnero.x, posEnero.y);
+      clickedEnero = `mouse_click:enero@(${posEnero.x},${posEnero.y})`;
+      console.log(`[F29] mouse.click Enero en (${posEnero.x}, ${posEnero.y})`);
     }
     resultado.click_enero = clickedEnero;
     await page.waitForTimeout(6000);
 
     resultado.rfi_urls_after_enero = rfiUrls.slice();
+    resultado.popup_urls_after_enero = popupUrls.slice();
+
+    // Textos post-click Enero para diagnóstico
+    const textosPostEnero = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll("td, a, span, div, button"));
+      return all.map(el => el.textContent?.trim() ?? "").filter(t => t.length > 0 && t.length < 80).slice(0, 80);
+    }).catch(() => []);
+    resultado.textos_post_enero = textosPostEnero;
 
     // Si GWT navegó a rfiInternet, extraer folio+codInt de la URL
     let folioCapturado = "";
     let codIntCapturado = "";
-    for (const url of rfiUrls) {
+    const todasUrls = [...rfiUrls, ...popupUrls];
+    for (const url of todasUrls) {
       const folioM = url.match(/[?&]folio=(\d+)/i);
       const codIntM = url.match(/[?&]codInt=([^&]+)/i);
       if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
@@ -291,30 +301,30 @@ export async function GET(req: NextRequest) {
     resultado.folio_capturado = folioCapturado;
     resultado.codInt_capturado = codIntCapturado;
 
-    // Buscar "Formulario Compacto" en todos los frames y hacer click
+    // Buscar "Formulario Compacto" usando mouse.click real
     if (!folioCapturado) {
-      // Si no navegó a rfiInternet, buscar el botón en la página actual
-      for (const frame of page.frames()) {
-        try {
-          const clickedFC = await frame.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll("a, button, input"));
-            const btn = btns.find(el => {
-              const t = ((el as HTMLInputElement).value ?? el.textContent ?? "").toLowerCase();
-              return t.includes("compacto");
-            });
-            if (btn) {
-              (btn as HTMLElement).click();
-              return (btn as HTMLAnchorElement).href || (btn as HTMLInputElement).value || "clicked";
-            }
-            return null;
-          });
-          if (clickedFC) { resultado.click_form_compacto = clickedFC; break; }
-        } catch {}
+      const posCompacto = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll("a, button, input, td, span"));
+        const el = all.find(e => {
+          const t = ((e as HTMLInputElement).value ?? e.textContent ?? "").toLowerCase();
+          return t.includes("compacto");
+        });
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: (el as HTMLInputElement).value || el.textContent?.trim() };
+      });
+      resultado.pos_compacto = posCompacto;
+      if (posCompacto) {
+        await page.mouse.click(posCompacto.x, posCompacto.y);
+        resultado.click_form_compacto = `mouse_click:compacto@(${posCompacto.x},${posCompacto.y})`;
+        console.log(`[F29] mouse.click Compacto en (${posCompacto.x}, ${posCompacto.y})`);
       }
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(6000);
       resultado.rfi_urls_after_compacto = rfiUrls.slice();
+      resultado.popup_urls_after_compacto = popupUrls.slice();
       // Intentar capturar folio de la nueva navegación
-      for (const url of rfiUrls) {
+      const todasUrls2 = [...rfiUrls, ...popupUrls];
+      for (const url of todasUrls2) {
         const folioM = url.match(/[?&]folio=(\d+)/i);
         const codIntM = url.match(/[?&]codInt=([^&]+)/i);
         if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
