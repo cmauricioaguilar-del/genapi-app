@@ -248,29 +248,32 @@ export async function GET(req: NextRequest) {
     context.on("page", async (newPage) => {
       console.log(`[F29 POPUP] Nueva ventana abierta`);
       try {
-        // Interceptar respuestas PDF en el popup
+        // Loguear TODAS las requests del popup para diagnóstico
+        newPage.on("request", (req) => {
+          console.log(`[F29 POPUP REQ] ${req.method()} ${req.url()}`);
+          popupUrls.push(`REQ:${req.url()}`);
+        });
+        // Interceptar respuestas en el popup
         newPage.on("response", async (resp) => {
           const ct = resp.headers()["content-type"] ?? "";
           const u = resp.url();
-          if (ct.includes("pdf") || ct.includes("octet") || u.includes("formCompacto")) {
+          console.log(`[F29 POPUP RESP] ${u} ct=${ct.slice(0, 40)}`);
+          if (ct.includes("pdf") || ct.includes("octet") || u.includes("formCompacto") || u.includes("rfiInternet")) {
             const buf = await resp.body().catch(() => null);
-            if (buf && buf.length > 500) {
-              pdfBytesPopup = buf;
-              console.log(`[F29 POPUP] PDF capturado desde popup len=${buf.length}`);
+            if (buf && buf.length > 100) {
+              popupUrls.push(`RESP:${u}:len=${buf.length}:inicio=${buf.slice(0, 4).toString("ascii")}`);
+              if (buf.slice(0, 4).toString("ascii") === "%PDF") {
+                pdfBytesPopup = buf;
+                console.log(`[F29 POPUP] PDF capturado len=${buf.length}`);
+              }
             }
           }
         });
-        // Esperar a que navegue a rfiInternet
-        await newPage.waitForURL(/rfiInternet|formCompacto/, { timeout: 15000 }).catch(() => {});
-        const finalUrl = newPage.url();
-        popupUrls.push(finalUrl);
-        console.log(`[F29 POPUP] URL final: ${finalUrl}`);
-        // Esperar que cargue el PDF
-        await newPage.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
-        await newPage.waitForTimeout(3000);
+        await newPage.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+        await newPage.waitForTimeout(5000);
+        popupUrls.push(`FINAL_URL:${newPage.url()}`);
       } catch (e: any) {
-        popupUrls.push(newPage.url());
-        console.log(`[F29 POPUP] Error: ${e.message}`);
+        popupUrls.push(`ERROR:${(e as Error).message}`);
       }
     });
 
@@ -342,22 +345,30 @@ export async function GET(req: NextRequest) {
       codIntCapturado = "V"; // formCompacto usa "V" para declaración vigente
     }
 
-    // Buscar "Formulario Compacto" con texto exacto y hacer click preciso
-    const posCompacto = await page.evaluate(() => {
+    // Inspeccionar el botón "Formulario Compacto" antes de clickear
+    const infoCompacto = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
-      // Buscar texto exacto "Formulario Compacto"
       const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
       if (!el) return null;
       const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0)
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim(), tag: el.tagName };
-      return null;
+      if (rect.width === 0 || rect.height === 0) return null;
+      return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+        tag: el.tagName,
+        text: el.textContent?.trim(),
+        href: (el as HTMLAnchorElement).href ?? "",
+        onclick: el.getAttribute("onclick") ?? "",
+        // Buscar el onclick en padres
+        parentOnclick: el.parentElement?.getAttribute("onclick") ?? "",
+        parentHref: (el.parentElement as HTMLAnchorElement)?.href ?? "",
+      };
     });
-    resultado.pos_compacto = posCompacto;
+    resultado.pos_compacto = infoCompacto;
 
-    if (posCompacto) {
-      await page.mouse.click(posCompacto.x, posCompacto.y);
-      resultado.click_form_compacto = `mouse_click:${posCompacto.tag}@(${posCompacto.x},${posCompacto.y})`;
+    if (infoCompacto) {
+      await page.mouse.click(infoCompacto.x, infoCompacto.y);
+      resultado.click_form_compacto = `mouse_click:${infoCompacto.tag}@(${infoCompacto.x},${infoCompacto.y})`;
     }
     await page.waitForTimeout(6000);
     resultado.rfi_urls_after_compacto = rfiUrls.slice();
