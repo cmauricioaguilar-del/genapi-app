@@ -182,69 +182,145 @@ export async function GET(req: NextRequest) {
     resultado.gwt_body_len = gwtBody.length;
     resultado.gwt_body_sample = gwtBody.slice(0, 500);
 
-    // 3. PARSEAR GWT-RPC
-    const { strings, numeros } = parsearGwtRpc(gwtBody);
-    resultado.gwt_strings_count = strings.length;
-    resultado.gwt_strings_all = strings; // todos para diagnóstico
-    resultado.gwt_numeros_sample = numeros.slice(0, 30);
+    // 3. CLICK EN "5" PARA EXPANDIR EL AÑO Y CAPTURAR NAVEGACIÓN A rfiInternet
+    // Interceptar cualquier request a rfiInternet para capturar folio+codInt
+    const rfiUrls: string[] = [];
+    await page.route("**/*rfiInternet*", async (route) => {
+      const url = route.request().url();
+      rfiUrls.push(url);
+      console.log(`[F29 RFI] Interceptado: ${url}`);
+      await route.continue();
+    });
 
-    const foliosPorPeriodo = extraerFoliosPorPeriodo(strings);
-    resultado.folios_encontrados = Object.fromEntries(foliosPorPeriodo);
+    // Click en el número de declaraciones del año (el "5" bajo 2026)
+    const clickedNum = await page.evaluate(() => {
+      const tds = Array.from(document.querySelectorAll("td, a"));
+      const numEl = tds.find(el => {
+        const t = el.textContent?.trim() ?? "";
+        return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
+      });
+      if (numEl) { (numEl as HTMLElement).click(); return numEl.textContent?.trim(); }
+      return null;
+    });
+    resultado.click_num = clickedNum;
+    await page.waitForTimeout(5000);
 
-    // 4. DESCARGAR PDF DEL PERÍODO SOLICITADO
-    const folioData = foliosPorPeriodo.get(period);
-    if (!folioData) {
-      resultado.error_pdf = `No se encontró folio para período ${period}`;
-      resultado.todos_periodos = [...foliosPorPeriodo.keys()];
-    } else {
-      const { folio, codInt } = folioData;
-      resultado.folio = folio;
-      resultado.codInt = codInt;
+    // Buscar "Enero" en TODOS los frames (GWT puede renderizar en iframes)
+    const frames = page.frames();
+    resultado.frames_count = frames.length;
+    resultado.frames_urls = frames.map(f => f.url());
 
-      // Intentar descargar el PDF via formCompacto
-      const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folio}&rut=${rutDigitos}&form=029&codInt=${codInt}`;
+    let clickedEnero: string | null = null;
+    for (const frame of frames) {
+      try {
+        const found = await frame.evaluate((mesNombre: string) => {
+          const all = Array.from(document.querySelectorAll("a, td, span, div"));
+          const el = all.find(e => e.textContent?.trim().toLowerCase() === mesNombre.toLowerCase());
+          if (!el) return null;
+          // Buscar el link/clickable en la misma fila
+          const row = el.closest("tr");
+          if (row) {
+            const links = Array.from(row.querySelectorAll("a[href], td[onclick], span[onclick]"));
+            for (const link of links) {
+              const href = (link as HTMLAnchorElement).href ?? "";
+              const onclick = link.getAttribute("onclick") ?? "";
+              if (href.includes("rfi") || href.includes("sifm") || onclick) {
+                (link as HTMLElement).click();
+                return `clicked_link:${href || onclick}`;
+              }
+            }
+            // Si no hay link explícito, click en la fila completa
+            const cells = Array.from(row.querySelectorAll("td"));
+            const secondCell = cells[1]; // columna 2026
+            if (secondCell) { (secondCell as HTMLElement).click(); return `clicked_cell_2026`; }
+          }
+          (el as HTMLElement).click();
+          return `clicked_el:${el.tagName}`;
+        }, "Enero");
+        if (found) { clickedEnero = found; break; }
+      } catch {}
+    }
+    resultado.click_enero = clickedEnero;
+    await page.waitForTimeout(6000);
+
+    resultado.rfi_urls_after_enero = rfiUrls.slice();
+
+    // Si GWT navegó a rfiInternet, extraer folio+codInt de la URL
+    let folioCapturado = "";
+    let codIntCapturado = "";
+    for (const url of rfiUrls) {
+      const folioM = url.match(/[?&]folio=(\d+)/i);
+      const codIntM = url.match(/[?&]codInt=([^&]+)/i);
+      if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
+    }
+    resultado.folio_capturado = folioCapturado;
+    resultado.codInt_capturado = codIntCapturado;
+
+    // Buscar "Formulario Compacto" en todos los frames y hacer click
+    if (!folioCapturado) {
+      // Si no navegó a rfiInternet, buscar el botón en la página actual
+      for (const frame of page.frames()) {
+        try {
+          const clickedFC = await frame.evaluate(() => {
+            const btns = Array.from(document.querySelectorAll("a, button, input"));
+            const btn = btns.find(el => {
+              const t = ((el as HTMLInputElement).value ?? el.textContent ?? "").toLowerCase();
+              return t.includes("compacto");
+            });
+            if (btn) {
+              (btn as HTMLElement).click();
+              return (btn as HTMLAnchorElement).href || (btn as HTMLInputElement).value || "clicked";
+            }
+            return null;
+          });
+          if (clickedFC) { resultado.click_form_compacto = clickedFC; break; }
+        } catch {}
+      }
+      await page.waitForTimeout(5000);
+      resultado.rfi_urls_after_compacto = rfiUrls.slice();
+      // Intentar capturar folio de la nueva navegación
+      for (const url of rfiUrls) {
+        const folioM = url.match(/[?&]folio=(\d+)/i);
+        const codIntM = url.match(/[?&]codInt=([^&]+)/i);
+        if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
+      }
+    }
+
+    await page.unroute("**/*rfiInternet*");
+
+    // 4. DESCARGAR PDF CON EL FOLIO CAPTURADO
+    if (folioCapturado) {
+      resultado.folio = folioCapturado;
+      resultado.codInt = codIntCapturado;
+      const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioCapturado}&rut=${rutDigitos}&form=029&codInt=${codIntCapturado}`;
       resultado.pdf_url = pdfUrl;
 
-      // Interceptar la respuesta PDF
       let pdfBytes: Buffer | null = null;
       const pdfHandler = async (response: import("playwright").Response) => {
-        const url = response.url();
-        if (url.includes("formCompacto") || url.includes("rfiInternet")) {
-          const ct = response.headers()["content-type"] ?? "";
-          if (ct.includes("pdf") || ct.includes("octet")) {
-            const buf = await response.body().catch(() => null);
-            if (buf) pdfBytes = buf;
-          }
+        const ct = response.headers()["content-type"] ?? "";
+        if (ct.includes("pdf") || ct.includes("octet")) {
+          const buf = await response.body().catch(() => null);
+          if (buf && buf.length > 500) pdfBytes = buf;
         }
       };
       page.on("response", pdfHandler);
-
       await page.goto(pdfUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
       await page.waitForTimeout(3000);
       page.off("response", pdfHandler);
 
-      resultado.pdf_url_final = page.url();
-      resultado.pdf_content_type = (await page.evaluate(() => document.contentType).catch(() => ""));
-      resultado.pdf_bytes_capturados = pdfBytes ? (pdfBytes as Buffer).length : 0;
-      resultado.page_html_snippet = (await page.content()).slice(0, 500);
-
-      if (pdfBytes && (pdfBytes as Buffer).length > 1000) {
-        resultado.pdf_ok = true;
-        resultado.pdf_inicio = (pdfBytes as Buffer).slice(0, 4).toString("ascii"); // "%PDF" si es PDF real
-      } else {
-        // Intentar fetch directo desde el contexto autenticado
-        const fetchResult = await page.evaluate(async (url: string) => {
-          try {
-            const r = await fetch(url, { credentials: "include" });
-            const ct = r.headers.get("content-type") ?? "";
-            const ab = await r.arrayBuffer();
-            const bytes = new Uint8Array(ab);
-            const inicio = String.fromCharCode(...bytes.slice(0, 4));
-            return { status: r.status, ct, size: ab.byteLength, inicio };
-          } catch (e: any) { return { error: e.message }; }
-        }, pdfUrl);
-        resultado.pdf_fetch_directo = fetchResult;
+      resultado.pdf_bytes = pdfBytes ? (pdfBytes as Buffer).length : 0;
+      resultado.pdf_inicio = pdfBytes ? (pdfBytes as Buffer).slice(0, 4).toString("ascii") : "";
+      resultado.pdf_ok = resultado.pdf_inicio === "%PDF";
+    } else {
+      // Diagnóstico: mostrar DOM de todos los frames para entender la estructura
+      resultado.frames_dom = [];
+      for (const frame of page.frames()) {
+        try {
+          const dom = await frame.evaluate(() => document.body?.innerHTML?.slice(0, 600) ?? "").catch(() => "");
+          if (dom.length > 50) (resultado.frames_dom as string[]).push(`[${frame.url()}]: ${dom}`);
+        } catch {}
       }
+      resultado.error_pdf = "No se capturó folio desde rfiInternet";
     }
 
     // 5. LOGOUT
