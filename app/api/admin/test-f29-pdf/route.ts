@@ -261,17 +261,20 @@ export async function GET(req: NextRequest) {
     // Ese es el link real que abre el detalle del F29 con botón "Formulario Compacto"
     const posDeclaracion = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll("a, td, span, div"));
-      // Buscar la primera celda con "Declaración" que esté en la misma fila que "Enero"
+      const candidatos: { x: number; y: number; text: string }[] = [];
       for (const el of all) {
-        const t = el.textContent?.trim().toLowerCase() ?? "";
-        if (t.includes("declaraci") && !t.includes("jurada")) {
+        const t = el.textContent?.trim() ?? "";
+        // Texto exacto "Declaración sin observaciones." o muy similar
+        if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
           const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim()?.slice(0, 60) };
+          // Filtrar: debe ser visible, ancho razonable y estar en la tabla (y > 280)
+          if (rect.width > 10 && rect.height > 0 && rect.top > 280) {
+            candidatos.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: t });
           }
         }
       }
-      return null;
+      // Retornar el primero (fila de Enero, columna 2026)
+      return candidatos[0] ?? null;
     });
     resultado.pos_declaracion = posDeclaracion;
 
