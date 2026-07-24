@@ -38,12 +38,10 @@ export async function GET(req: NextRequest) {
   const dv = rutNorm.slice(-1);
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
 
-  let screenshotB64 = "";
-  let screenshotLogoutB64 = "";
-  let urlFinal = "";
-  let urlLogout = "";
-  let loginOk = false;
-  let error = "";
+  const resultado: Record<string, any> = {
+    empresa: empresa.nombre,
+    rut: empresa.siiRut,
+  };
 
   const browser = await chromium.launch({
     headless: true,
@@ -61,7 +59,7 @@ export async function GET(req: NextRequest) {
     });
     const page = await context.newPage();
 
-    // Login
+    // 1. LOGIN
     await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
       waitUntil: "load", timeout: 30000,
     });
@@ -86,7 +84,6 @@ export async function GET(req: NextRequest) {
     }, { rut: rutDigitos, dv });
 
     await page.waitForTimeout(500);
-
     await Promise.all([
       page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
       page.locator('input[type="submit"], button[type="submit"]').first().click().catch(() =>
@@ -95,38 +92,51 @@ export async function GET(req: NextRequest) {
     ]);
     await page.waitForTimeout(3000);
 
-    urlFinal = page.url();
-    const cookies = await page.context().cookies();
-    loginOk = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE"));
+    const urlPostLogin = page.url();
+    const cookiesLogin = await page.context().cookies();
+    const loginOk = cookiesLogin.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE"));
+    resultado.login_ok = loginOk;
+    resultado.url_post_login = urlPostLogin;
+    resultado.cookies_auth = cookiesLogin.filter(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE")).map(c => c.name);
 
-    // Screenshot de la pantalla actual
-    const shot = await page.screenshot({ type: "png", fullPage: false });
-    screenshotB64 = shot.toString("base64");
+    // 2. VERIFICAR ACCESO A PÁGINA PROTEGIDA (antes del logout)
+    const respProtegida = await page.goto("https://homer.sii.cl/", {
+      waitUntil: "domcontentloaded", timeout: 10000,
+    }).catch(() => null);
+    const urlProtegidaAntes = page.url();
+    const sesionActivaAntes = !urlProtegidaAntes.includes("IngresoRutClave") && !urlProtegidaAntes.includes("zeusr");
+    resultado.verificacion_antes_logout = {
+      url: urlProtegidaAntes,
+      sesion_activa: sesionActivaAntes,
+    };
 
-    // Logout
-    for (const url of ["https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", "https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi"]) {
-      try { await page.goto(url, { timeout: 8000, waitUntil: "domcontentloaded" }); } catch {}
-    }
+    // 3. LOGOUT
+    await page.goto("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForTimeout(1000);
+    await page.goto("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", { timeout: 8000, waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(2000);
-    urlLogout = page.url();
-    const shotLogout = await page.screenshot({ type: "png", fullPage: false });
-    screenshotLogoutB64 = shotLogout.toString("base64");
+    resultado.url_post_logout = page.url();
+
+    // 4. VERIFICAR ACCESO A PÁGINA PROTEGIDA (después del logout)
+    await page.goto("https://homer.sii.cl/", {
+      waitUntil: "domcontentloaded", timeout: 10000,
+    }).catch(() => {});
+    const urlProtegidaDespues = page.url();
+    const sesionActivaDespues = !urlProtegidaDespues.includes("IngresoRutClave") && !urlProtegidaDespues.includes("zeusr");
+    resultado.verificacion_despues_logout = {
+      url: urlProtegidaDespues,
+      sesion_activa: sesionActivaDespues,
+      sesion_cerrada: !sesionActivaDespues,
+    };
+
+    resultado.logout_exitoso = !sesionActivaDespues;
+
     await context.close();
   } catch (e: any) {
-    error = e.message;
+    resultado.error = e.message;
   } finally {
     await browser.close();
   }
 
-  // Devolver HTML con la imagen embebida
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Screenshot SII - ${empresa.nombre}</title></head><body style="font-family:sans-serif;padding:16px">
-<h2>Login SII: ${empresa.nombre} (${empresa.siiRut})</h2>
-${error ? `<p style="color:red">Error: ${error}</p>` : ""}
-<h3>1. Después del login — URL: ${urlFinal} | Login OK: ${loginOk}</h3>
-<img src="data:image/png;base64,${screenshotB64}" style="max-width:100%;border:1px solid #ccc;display:block;margin-bottom:24px" />
-<h3>2. Después del logout — URL: ${urlLogout}</h3>
-<img src="data:image/png;base64,${screenshotLogoutB64}" style="max-width:100%;border:1px solid #ccc;display:block" />
-</body></html>`;
-
-  return new NextResponse(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  return NextResponse.json(resultado, { status: 200 });
 }
