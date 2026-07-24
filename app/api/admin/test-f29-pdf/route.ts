@@ -306,52 +306,53 @@ export async function GET(req: NextRequest) {
     resultado.rfi_urls_after_enero = rfiUrls.slice();
     resultado.popup_urls_after_enero = popupUrls.slice();
 
-    // Textos post-click para diagnóstico
-    const textosPostEnero = await page.evaluate(() => {
-      const all = Array.from(document.querySelectorAll("td, a, span, div, button"));
-      return all.map(el => el.textContent?.trim() ?? "").filter(t => t.length > 0 && t.length < 100).slice(0, 80);
-    }).catch(() => []);
-    resultado.textos_post_enero = textosPostEnero;
-
-    // Si GWT navegó a rfiInternet, extraer folio+codInt de la URL
+    // Extraer folio directamente del DOM — aparece como "NNNNNNNN - DECLARACION VIGENTE"
     let folioCapturado = "";
-    let codIntCapturado = "";
-    const todasUrls = [...rfiUrls, ...popupUrls];
-    for (const url of todasUrls) {
-      const folioM = url.match(/[?&]folio=(\d+)/i);
-      const codIntM = url.match(/[?&]codInt=([^&]+)/i);
-      if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
-    }
-    resultado.folio_capturado = folioCapturado;
-    resultado.codInt_capturado = codIntCapturado;
-
-    // Buscar "Formulario Compacto" usando mouse.click real
-    if (!folioCapturado) {
-      const posCompacto = await page.evaluate(() => {
-        const all = Array.from(document.querySelectorAll("a, button, input, td, span"));
-        const el = all.find(e => {
-          const t = ((e as HTMLInputElement).value ?? e.textContent ?? "").toLowerCase();
-          return t.includes("compacto");
-        });
-        if (!el) return null;
-        const rect = el.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: (el as HTMLInputElement).value || el.textContent?.trim() };
-      });
-      resultado.pos_compacto = posCompacto;
-      if (posCompacto) {
-        await page.mouse.click(posCompacto.x, posCompacto.y);
-        resultado.click_form_compacto = `mouse_click:compacto@(${posCompacto.x},${posCompacto.y})`;
-        console.log(`[F29] mouse.click Compacto en (${posCompacto.x}, ${posCompacto.y})`);
+    let codIntCapturado = "V";
+    const folioDelDom = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll("td, div, span"));
+      for (const el of all) {
+        const t = el.textContent?.trim() ?? "";
+        const m = t.match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+        if (m) return { folio: m[1], evigCod: m[2] };
       }
-      await page.waitForTimeout(6000);
-      resultado.rfi_urls_after_compacto = rfiUrls.slice();
-      resultado.popup_urls_after_compacto = popupUrls.slice();
-      // Intentar capturar folio de la nueva navegación
-      const todasUrls2 = [...rfiUrls, ...popupUrls];
+      return null;
+    });
+    resultado.folio_del_dom = folioDelDom;
+
+    if (folioDelDom) {
+      folioCapturado = folioDelDom.folio;
+      codIntCapturado = "V"; // formCompacto usa "V" para declaración vigente
+    }
+
+    // Buscar "Formulario Compacto" con texto exacto y hacer click preciso
+    const posCompacto = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
+      // Buscar texto exacto "Formulario Compacto"
+      const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0)
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: el.textContent?.trim(), tag: el.tagName };
+      return null;
+    });
+    resultado.pos_compacto = posCompacto;
+
+    if (posCompacto) {
+      await page.mouse.click(posCompacto.x, posCompacto.y);
+      resultado.click_form_compacto = `mouse_click:${posCompacto.tag}@(${posCompacto.x},${posCompacto.y})`;
+    }
+    await page.waitForTimeout(6000);
+    resultado.rfi_urls_after_compacto = rfiUrls.slice();
+    resultado.popup_urls_after_compacto = popupUrls.slice();
+
+    // También intentar capturar folio de URLs interceptadas
+    const todasUrls2 = [...rfiUrls, ...popupUrls];
+    if (!folioCapturado) {
       for (const url of todasUrls2) {
         const folioM = url.match(/[?&]folio=(\d+)/i);
         const codIntM = url.match(/[?&]codInt=([^&]+)/i);
-        if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? ""; break; }
+        if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? "V"; break; }
       }
     }
 
