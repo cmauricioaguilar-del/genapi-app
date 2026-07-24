@@ -257,32 +257,48 @@ export async function GET(req: NextRequest) {
       } catch {}
     });
 
-    // Buscar y clickear "Declaración sin observaciones." en la fila de Enero (columna 2026)
-    // Ese es el link real que abre el detalle del F29 con botón "Formulario Compacto"
-    const posDeclaracion = await page.evaluate(() => {
-      const all = Array.from(document.querySelectorAll("a, td, span, div"));
-      const candidatos: { x: number; y: number; text: string }[] = [];
+    // Buscar el checkmark/celda de "Enero 2026" — puede ser img con title, td con title, o div con text
+    // Estrategia: encontrar la fila de "Enero" y en esa fila, la celda de 2026 (primera con check/declaracion)
+    const infoEnero = await page.evaluate(() => {
+      // Buscar todos los elementos con title o textContent que contenga "sin observaciones"
+      const all = Array.from(document.querySelectorAll("*"));
+      const candidatos: { x: number; y: number; tag: string; text: string; title: string }[] = [];
       for (const el of all) {
-        const t = el.textContent?.trim() ?? "";
-        // Texto exacto "Declaración sin observaciones." o muy similar
-        if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
+        const title = el.getAttribute("title") ?? "";
+        const text = el.textContent?.trim() ?? "";
+        const isDeclaracion = title.includes("sin observaciones") || (text === "Declaración sin observaciones." || text === "Declaracion sin observaciones.");
+        if (isDeclaracion) {
           const rect = el.getBoundingClientRect();
-          // Filtrar: debe ser visible, ancho razonable y estar en la tabla (y > 280)
-          if (rect.width > 10 && rect.height > 0 && rect.top > 280) {
-            candidatos.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: t });
+          if (rect.width > 0 && rect.height > 0) {
+            candidatos.push({
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              tag: el.tagName,
+              text: text.slice(0, 40),
+              title: title.slice(0, 40),
+            });
           }
         }
       }
-      // Retornar el primero (fila de Enero, columna 2026)
-      return candidatos[0] ?? null;
+      return candidatos;
     });
-    resultado.pos_declaracion = posDeclaracion;
+    resultado.candidatos_declaracion = infoEnero;
+
+    // Clickear el primer candidato visible con y > 200 (evitar header)
+    const primero = infoEnero.find(c => c.y > 200);
+    resultado.pos_declaracion = primero ?? null;
 
     let clickedEnero: string | null = null;
-    if (posDeclaracion) {
-      await page.mouse.click(posDeclaracion.x, posDeclaracion.y);
-      clickedEnero = `mouse_click:declaracion@(${posDeclaracion.x},${posDeclaracion.y})`;
-      console.log(`[F29] mouse.click Declaracion en (${posDeclaracion.x}, ${posDeclaracion.y})`);
+    if (primero) {
+      await page.mouse.click(primero.x, primero.y);
+      clickedEnero = `mouse_click:${primero.tag}@(${primero.x},${primero.y})`;
+      console.log(`[F29] mouse.click check en (${primero.x}, ${primero.y}) tag=${primero.tag}`);
+    } else {
+      // Fallback: usar Playwright getByText directo
+      try {
+        await page.getByText("Declaración sin observaciones.").first().click({ timeout: 3000 });
+        clickedEnero = "playwright_getByText_click";
+      } catch {}
     }
     resultado.click_enero = clickedEnero;
     await page.waitForTimeout(8000);
