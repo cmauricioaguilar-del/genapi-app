@@ -1,0 +1,1 @@
+ALTER TABLE "f29_genapi" ADD COLUMN IF NOT EXISTS "pdfBytes" BYTEA;

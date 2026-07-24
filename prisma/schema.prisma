@@ -168,6 +168,7 @@ model F29Genapi {
   ppm                 Int      @default(0)
   totalPagar          Int      @default(0)
   rawData             Json?
+  pdfBytes            Bytes?
   extractedAt         DateTime @default(now())
 
   empresaId    String
