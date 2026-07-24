@@ -110,17 +110,23 @@ export async function GET(req: NextRequest) {
       sesion_activa: sesionActivaAntes,
     };
 
-    // 3. LOGOUT — navegar a misiir y hacer clic en el botón "Cerrar Sesión"
-    await page.goto("https://misiir.sii.cl/cgi_AUT2000/autCTermino.cgi", { timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
-    await page.waitForTimeout(1500);
-    resultado.url_pre_click_logout = page.url();
-    resultado.html_logout_snippet = (await page.content()).slice(0, 500);
-    // Intentar hacer clic en el botón "Cerrar Sesión"
+    // 3. LOGOUT — ir a misiir.sii.cl y hacer clic en "Cerrar Sesión"
+    await page.goto("https://misiir.sii.cl/", { timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
+    await page.waitForTimeout(2000);
+    resultado.url_misiir = page.url();
+    // Capturar links disponibles para diagnóstico
+    resultado.links_misiir = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("a")).map(a => ({ text: a.textContent?.trim().slice(0, 40), href: a.href })).filter(l => l.text)
+    );
+    // Hacer clic en "Cerrar Sesión"
     const clicked = await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll("a, button, input[type=submit], input[type=button]"));
-      const btn = btns.find(el => el.textContent?.toLowerCase().includes("cerrar") || (el as HTMLInputElement).value?.toLowerCase().includes("cerrar"));
-      if (btn) { (btn as HTMLElement).click(); return true; }
-      return false;
+      const all = Array.from(document.querySelectorAll("a, button, input[type=submit], input[type=button]"));
+      const btn = all.find(el => {
+        const t = (el.textContent ?? (el as HTMLInputElement).value ?? "").toLowerCase();
+        return t.includes("cerrar") || t.includes("salir") || t.includes("logout");
+      });
+      if (btn) { (btn as HTMLElement).click(); return (btn as HTMLAnchorElement).href || btn.tagName; }
+      return null;
     });
     resultado.logout_btn_clicked = clicked;
     await page.waitForTimeout(3000);
