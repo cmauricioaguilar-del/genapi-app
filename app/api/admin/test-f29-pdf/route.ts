@@ -440,40 +440,22 @@ export async function GET(req: NextRequest) {
       const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioCapturado}&rut=${rutDigitos}&form=029&codInt=${codIntCapturado}`;
       resultado.pdf_url = pdfUrl;
 
-      // Primero verificar si el popup ya capturó el PDF
+      // Descargar PDF con context.request (HTTP directo con cookies de sesión, sin navegar la página)
       let pdfBytes: Buffer | null = pdfBytesPopup;
 
       if (!pdfBytes) {
-        // Navegar directamente a la URL real con las cookies de sesión actuales
-        let capturedPdfBytes: Buffer | null = null;
-        const pdfHandler = async (response: import("playwright").Response) => {
-          const ct = response.headers()["content-type"] ?? "";
-          const u = response.url();
-          if (ct.includes("pdf") || ct.includes("octet-stream") || u.includes("formCompacto") || u.includes("rfiInternet")) {
-            const buf = await response.body().catch(() => null);
-            if (buf && buf.length > 500) {
-              console.log(`[F29 PDF] Respuesta capturada len=${buf.length} ct=${ct} url=${u}`);
-              capturedPdfBytes = buf;
-            }
-          }
-        };
-        page.on("response", pdfHandler);
-        await page.goto(pdfUrl, { waitUntil: "load", timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(3000);
-        page.off("response", pdfHandler);
-        pdfBytes = capturedPdfBytes;
-
-        // Si no capturó vía response, leer el contenido de la página directamente
-        if (!pdfBytes) {
-          const pageContent = await page.evaluate(() => document.body?.innerText?.slice(0, 200) ?? "").catch(() => "");
-          resultado.pdf_page_content = pageContent;
-          // Intentar leer el buffer de la página
-          const rawContent = await page.evaluate(() => {
-            const pre = document.querySelector("pre");
-            return pre ? pre.textContent?.slice(0, 50) : null;
-          }).catch(() => null);
-          resultado.pdf_raw_sample = rawContent;
-        }
+        const pdfResp = await context.request.get(pdfUrl, {
+          headers: {
+            "Referer": "https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29",
+            "Accept": "application/pdf,*/*",
+          },
+        });
+        const ct = pdfResp.headers()["content-type"] ?? "";
+        const buf = await pdfResp.body();
+        resultado.pdf_response_status = pdfResp.status();
+        resultado.pdf_response_ct = ct;
+        resultado.pdf_response_len = buf.length;
+        if (buf.length > 500) pdfBytes = buf as unknown as Buffer;
       }
 
       resultado.pdf_bytes = pdfBytes ? (pdfBytes as Buffer).length : 0;
