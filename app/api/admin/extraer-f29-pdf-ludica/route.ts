@@ -132,46 +132,76 @@ export async function GET(req: NextRequest) {
     // codInt es de sesión — lo capturamos en el primer mes y lo reutilizamos
     let codIntSesion = "";
 
-    // Helper: re-expandir año 2026 y esperar que aparezcan las filas de meses
-    async function expandirAnio() {
-      const pos = await page.evaluate(() => {
-        const tds = Array.from(document.querySelectorAll("td, a, span"));
-        const el = tds.find(e => {
-          const t = e.textContent?.trim() ?? "";
-          return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
-        });
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-      });
-      if (!pos) return false;
-      await page.mouse.click(pos.x, pos.y);
-      await page.waitForTimeout(6000);
-      return true;
+    // Encontrar las N celdas "Declaración sin observaciones." ya renderizadas (ordenadas por Y)
+    // La lista ya está expandida desde el paso 3
+    const candidatosTD = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll("td"));
+      const found: { x: number; y: number }[] = [];
+      for (const el of all) {
+        const t = el.textContent?.trim() ?? "";
+        if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            found.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+          }
+        }
+      }
+      // Ordenar por Y ascendente y deduplicar (GWT duplica elementos)
+      found.sort((a, b) => a.y - b.y);
+      const dedup: { x: number; y: number }[] = [];
+      for (const p of found) {
+        if (!dedup.length || Math.abs(p.y - dedup[dedup.length - 1].y) > 5) dedup.push(p);
+      }
+      return dedup;
+    });
+    log.push(`Celdas de meses encontradas: ${candidatosTD.length} → ${JSON.stringify(candidatosTD)}`);
+
+    if (candidatosTD.length < PERIODOS.length) {
+      await context.close();
+      return NextResponse.json({ error: `Solo ${candidatosTD.length} celdas encontradas, se esperaban ${PERIODOS.length}`, log });
     }
 
-    // 4. ITERAR LOS 5 MESES
+    // 4. ITERAR LOS 5 MESES — SIN re-expandir, siguiendo flujo manual:
+    //    click fila → esperar folio → click Formulario Compacto → capturar URL → cerrar popup → siguiente
     for (let i = 0; i < PERIODOS.length; i++) {
       const period = PERIODOS[i];
-      const filaY = FILAS_Y[i];
-      const res: Record<string, any> = { period };
+      const celda = candidatosTD[i];
+      const res: Record<string, any> = { period, celda };
 
       try {
-        log.push(`--- Procesando ${period} (fila y=${filaY}) ---`);
+        log.push(`--- Procesando ${period} (celda ${i}: x=${celda.x} y=${celda.y}) ---`);
 
-        // Re-expandir el año para cada mes (asegura que las filas están visibles)
-        await expandirAnio();
+        // Leer folio actual antes del click para detectar cambio
+        const folioAntes = await page.evaluate(() => {
+          const all = Array.from(document.querySelectorAll("td, div, span"));
+          for (const el of all) {
+            const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+            if (m) return m[1];
+          }
+          return null;
+        });
 
-        // Limpiar window.open
+        // Click en la celda del mes
         await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
+        await page.mouse.click(celda.x, celda.y);
 
-        // Click en la fila del mes
-        await page.mouse.click(531.9296875, filaY);
-
-        // Esperar hasta que aparezca un folio en el panel (máx 10s)
+        // Esperar hasta que el folio cambie (o aparezca por primera vez) — máx 10s
         let folioDelDom: { folio: string; tipo: string } | null = null;
         for (let intento = 0; intento < 20; intento++) {
           await page.waitForTimeout(500);
+          folioDelDom = await page.evaluate((anterior: string | null) => {
+            const all = Array.from(document.querySelectorAll("td, div, span"));
+            for (const el of all) {
+              const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+              if (m && m[1] !== anterior) return { folio: m[1], tipo: m[2] };
+            }
+            return null;
+          }, folioAntes);
+          if (folioDelDom) break;
+        }
+
+        // Si el folio no cambió y es el primer mes, aceptar el que haya
+        if (!folioDelDom && i === 0) {
           folioDelDom = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll("td, div, span"));
             for (const el of all) {
@@ -180,25 +210,26 @@ export async function GET(req: NextRequest) {
             }
             return null;
           });
-          if (folioDelDom) break;
         }
 
+        res.folio_antes = folioAntes;
         res.folio_dom = folioDelDom;
 
         if (!folioDelDom) {
-          log.push(`  ${period}: Sin folio en DOM`);
+          log.push(`  ${period}: Sin folio en DOM tras click`);
           res.error = "Sin folio en DOM";
           resultados.push(res);
           continue;
         }
 
-        // Si ya tenemos codInt de sesión, construir URL directamente sin click adicional
+        // Obtener URL del PDF
         let pdfUrl = "";
         if (codIntSesion) {
+          // Reutilizar codInt ya conocido con el folio del mes actual
           pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioDelDom.folio}&rut=${rutDigitos}&form=029&codInt=${codIntSesion}`;
           res.pdf_url_source = "codInt_reutilizado";
         } else {
-          // Primera vez: hacer click en "Formulario Compacto" para capturar codInt
+          // Primera vez: click en "Formulario Compacto" para capturar codInt de sesión
           await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
           const posCompacto = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
@@ -209,7 +240,7 @@ export async function GET(req: NextRequest) {
             return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
           });
           if (!posCompacto) {
-            log.push(`  ${period}: No se encontró botón "Formulario Compacto"`);
+            log.push(`  ${period}: No se encontró "Formulario Compacto"`);
             res.error = "Sin botón Formulario Compacto";
             resultados.push(res);
             continue;
@@ -220,13 +251,16 @@ export async function GET(req: NextRequest) {
           if (calls.length > 0 && calls[0][0] && calls[0][0] !== ":") {
             const realUrl: string = calls[0][0];
             const codIntM = realUrl.match(/[?&]codInt=([^&]+)/i);
-            if (codIntM) {
-              codIntSesion = codIntM[1];
-              log.push(`  codInt de sesión capturado: ${codIntSesion}`);
-            }
+            if (codIntM) { codIntSesion = codIntM[1]; log.push(`  codInt sesión: ${codIntSesion}`); }
             pdfUrl = realUrl;
           }
           res.pdf_url_source = "window_open";
+
+          // Cerrar popup para no bloquear clicks siguientes
+          await page.waitForTimeout(500);
+          for (const p of context.pages()) {
+            if (p !== page) await p.close().catch(() => {});
+          }
         }
 
         if (!pdfUrl) {
