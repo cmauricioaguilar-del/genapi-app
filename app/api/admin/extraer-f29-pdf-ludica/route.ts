@@ -19,7 +19,6 @@ function formatearRutConPuntos(rutDigitos: string) {
   return rutDigitos.slice(0, len - 6) + "." + rutDigitos.slice(len - 6, len - 3) + "." + rutDigitos.slice(len - 3);
 }
 
-// Extrae folio del panel de detalle GWT
 async function leerFolio(page: import("playwright").Page): Promise<{ folio: string; tipo: string } | null> {
   return page.evaluate(() => {
     const all = Array.from(document.querySelectorAll("td, div, span, option"));
@@ -31,7 +30,6 @@ async function leerFolio(page: import("playwright").Page): Promise<{ folio: stri
   });
 }
 
-// Hace click en el contador de declaraciones 2026 para expandir los meses
 async function expandirMeses(page: import("playwright").Page, log: string[]): Promise<boolean> {
   const posNum = await page.evaluate(() => {
     const tds = Array.from(document.querySelectorAll("td, a, span"));
@@ -43,18 +41,13 @@ async function expandirMeses(page: import("playwright").Page, log: string[]): Pr
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
-  if (!posNum) {
-    log.push("  expandirMeses: contador no encontrado");
-    return false;
-  }
+  if (!posNum) { log.push("  expandirMeses: contador no encontrado"); return false; }
   await page.mouse.click(posNum.x, posNum.y);
   log.push(`  expandirMeses: click en (${posNum.x}, ${posNum.y})`);
-  // Esperar que aparezcan las celdas de meses
   for (let t = 0; t < 20; t++) {
     await page.waitForTimeout(500);
     const ok = await page.evaluate(() => {
-      const tds = Array.from(document.querySelectorAll("td"));
-      return tds.some(el => {
+      return Array.from(document.querySelectorAll("td")).some(el => {
         const txt = el.textContent?.trim() ?? "";
         return txt === "Declaración sin observaciones." || txt === "Declaracion sin observaciones.";
       });
@@ -65,18 +58,15 @@ async function expandirMeses(page: import("playwright").Page, log: string[]): Pr
   return false;
 }
 
-// Captura coordenadas de cada fila de mes (texto "Declaración sin observaciones.")
 async function capturarCandidatos(page: import("playwright").Page): Promise<{ x: number; y: number }[]> {
   return page.evaluate(() => {
-    const tds = Array.from(document.querySelectorAll("td"));
     const found: { x: number; y: number }[] = [];
-    for (const el of tds) {
+    for (const el of Array.from(document.querySelectorAll("td"))) {
       const t = el.textContent?.trim() ?? "";
       if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
         const rect = el.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) {
+        if (rect.width > 0 && rect.height > 0)
           found.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-        }
       }
     }
     found.sort((a, b) => a.y - b.y);
@@ -88,11 +78,10 @@ async function capturarCandidatos(page: import("playwright").Page): Promise<{ x:
   });
 }
 
-// Hace click en "Volver" — regresa a la tabla de años (imagen 5)
 async function clickVolver(page: import("playwright").Page, log: string[]) {
   const pos = await page.evaluate(() => {
-    const all = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"));
-    const el = all.find(e => e.textContent?.trim() === "Volver" || (e as HTMLInputElement).value === "Volver");
+    const el = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"))
+      .find(e => e.textContent?.trim() === "Volver" || (e as HTMLInputElement).value === "Volver");
     if (!el) return null;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
@@ -187,15 +176,15 @@ export async function GET(req: NextRequest) {
     await page.waitForTimeout(12000);
     log.push("Página F29 cargada");
 
-    // 3. ITERAR CADA MES — flujo correcto:
-    //    expandir meses → click fila → folio → Formulario Compacto → popup → PDF → cerrar popup → Volver → repetir
+    // 3. ITERAR CADA MES
     for (let i = 0; i < PERIODOS.length; i++) {
       const period = PERIODOS[i];
       const res: Record<string, any> = { period };
 
       try {
-        // Expandir meses (desde tabla de años)
         log.push(`--- ${period} (mes ${i + 1}/${PERIODOS.length}) ---`);
+
+        // Expandir meses desde tabla de años
         const expandido = await expandirMeses(page, log);
         if (!expandido) {
           res.error = "No se pudo expandir meses";
@@ -204,10 +193,9 @@ export async function GET(req: NextRequest) {
         }
         await page.waitForTimeout(2000);
 
-        // Capturar coordenadas frescas en cada iteración
+        // Capturar coordenadas frescas
         const candidatos = await capturarCandidatos(page);
         log.push(`  Celdas: ${candidatos.length} → mes[${i}]=${JSON.stringify(candidatos[i])}`);
-
         if (candidatos.length <= i) {
           res.error = `Solo ${candidatos.length} celdas, se necesita índice ${i}`;
           resultados.push(res);
@@ -228,7 +216,6 @@ export async function GET(req: NextRequest) {
           if (folioDelDom) break;
         }
         res.folio_dom = folioDelDom;
-
         if (!folioDelDom) {
           log.push(`  ${period}: Sin folio en DOM`);
           res.error = "Sin folio en DOM";
@@ -240,14 +227,13 @@ export async function GET(req: NextRequest) {
 
         // Buscar botón "Formulario Compacto"
         const posCompacto = await page.evaluate(() => {
-          const all = Array.from(document.querySelectorAll("a, button, td, span, div"));
-          const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
+          const el = Array.from(document.querySelectorAll("a, button, td, span, div"))
+            .find(e => e.textContent?.trim() === "Formulario Compacto");
           if (!el) return null;
           const rect = el.getBoundingClientRect();
           if (rect.width === 0 || rect.height === 0) return null;
           return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         });
-
         if (!posCompacto) {
           log.push(`  ${period}: No se encontró "Formulario Compacto"`);
           res.error = "Sin botón Formulario Compacto";
@@ -256,27 +242,28 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // Escuchar popup ANTES de clickear
-        const popupPromise = context.waitForEvent("page", { timeout: 12000 }).catch(() => null);
-        await page.mouse.click(posCompacto.x, posCompacto.y);
-        const popup = await popupPromise;
-
-        let pdfUrl = "";
-        if (popup) {
-          // Polling hasta que popup.url() contenga "formCompacto" (máx 10s)
-          for (let t = 0; t < 20; t++) {
-            await page.waitForTimeout(500);
-            const u = popup.url();
-            if (u && u.includes("formCompacto")) { pdfUrl = u; break; }
+        // Interceptar request de red a formCompacto — captura URL sin depender del popup
+        let capturedUrl = "";
+        const requestHandler = (req: import("playwright").Request) => {
+          if (req.url().includes("formCompacto") && !capturedUrl) {
+            capturedUrl = req.url();
           }
-          log.push(`  ${period}: popup URL = ${pdfUrl || popup.url()}`);
-          await popup.close().catch(() => {});
+        };
+        context.on("request", requestHandler);
+
+        await page.mouse.click(posCompacto.x, posCompacto.y);
+
+        // Esperar hasta 10s a que llegue la request
+        for (let t = 0; t < 20; t++) {
+          await page.waitForTimeout(500);
+          if (capturedUrl) break;
         }
+        context.off("request", requestHandler);
 
-        res.pdf_url_source = "popup";
-        res.pdf_url = pdfUrl;
+        log.push(`  ${period}: capturedUrl = ${capturedUrl}`);
+        res.pdf_url = capturedUrl;
 
-        if (!pdfUrl) {
+        if (!capturedUrl) {
           log.push(`  ${period}: Sin URL de PDF`);
           res.error = "Sin URL de PDF";
           resultados.push(res);
@@ -285,7 +272,7 @@ export async function GET(req: NextRequest) {
         }
 
         // Descargar PDF con cookies de sesión
-        const pdfResp = await context.request.get(pdfUrl, {
+        const pdfResp = await context.request.get(capturedUrl, {
           headers: {
             "Referer": "https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29",
             "Accept": "application/pdf,*/*",
