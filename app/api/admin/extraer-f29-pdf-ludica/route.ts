@@ -119,6 +119,37 @@ export async function GET(req: NextRequest) {
     await page.waitForTimeout(10000);
     log.push(`Click en contador de declaraciones (${posNum.x}, ${posNum.y})`);
 
+    // Instalar interceptor de window.open una sola vez
+    await page.evaluate(() => {
+      const orig = window.open.bind(window);
+      (window as any).__windowOpenCalls = [];
+      window.open = function(...args: any[]) {
+        (window as any).__windowOpenCalls.push(args.map(String));
+        return orig(...args);
+      };
+    });
+
+    // codInt es de sesión — lo capturamos en el primer mes y lo reutilizamos
+    let codIntSesion = "";
+
+    // Helper: re-expandir año 2026 y esperar que aparezcan las filas de meses
+    async function expandirAnio() {
+      const pos = await page.evaluate(() => {
+        const tds = Array.from(document.querySelectorAll("td, a, span"));
+        const el = tds.find(e => {
+          const t = e.textContent?.trim() ?? "";
+          return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
+        });
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      if (!pos) return false;
+      await page.mouse.click(pos.x, pos.y);
+      await page.waitForTimeout(6000);
+      return true;
+    }
+
     // 4. ITERAR LOS 5 MESES
     for (let i = 0; i < PERIODOS.length; i++) {
       const period = PERIODOS[i];
@@ -128,50 +159,19 @@ export async function GET(req: NextRequest) {
       try {
         log.push(`--- Procesando ${period} (fila y=${filaY}) ---`);
 
-        // Instalar interceptor de window.open (solo la primera vez)
-        await page.evaluate(() => {
-          if (!(window as any).__windowOpenPatched) {
-            const orig = window.open.bind(window);
-            window.open = function(...args: any[]) {
-              (window as any).__windowOpenCalls = (window as any).__windowOpenCalls ?? [];
-              (window as any).__windowOpenCalls.push(args.map(String));
-              return orig(...args);
-            };
-            (window as any).__windowOpenPatched = true;
-          }
-          (window as any).__windowOpenCalls = [];
-        });
+        // Re-expandir el año para cada mes (asegura que las filas están visibles)
+        await expandirAnio();
 
-        // Leer folio actual antes de hacer clic (para detectar el cambio)
-        const folioAntes = await page.evaluate(() => {
-          const all = Array.from(document.querySelectorAll("td, div, span"));
-          for (const el of all) {
-            const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
-            if (m) return m[1];
-          }
-          return null;
-        });
+        // Limpiar window.open
+        await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
 
         // Click en la fila del mes
         await page.mouse.click(531.9296875, filaY);
 
-        // Esperar hasta que el folio en el panel cambie (máx 8s)
+        // Esperar hasta que aparezca un folio en el panel (máx 10s)
         let folioDelDom: { folio: string; tipo: string } | null = null;
-        for (let intento = 0; intento < 16; intento++) {
+        for (let intento = 0; intento < 20; intento++) {
           await page.waitForTimeout(500);
-          const found = await page.evaluate((folioAnterior: string | null) => {
-            const all = Array.from(document.querySelectorAll("td, div, span"));
-            for (const el of all) {
-              const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
-              if (m && m[1] !== folioAnterior) return { folio: m[1], tipo: m[2] };
-            }
-            return null;
-          }, folioAntes);
-          if (found) { folioDelDom = found; break; }
-        }
-
-        // Si no cambió, puede ser el primer mes o el mismo folio real — aceptarlo igual
-        if (!folioDelDom) {
           folioDelDom = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll("td, div, span"));
             for (const el of all) {
@@ -180,10 +180,10 @@ export async function GET(req: NextRequest) {
             }
             return null;
           });
+          if (folioDelDom) break;
         }
 
         res.folio_dom = folioDelDom;
-        res.folio_antes = folioAntes;
 
         if (!folioDelDom) {
           log.push(`  ${period}: Sin folio en DOM`);
@@ -192,44 +192,45 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // Limpiar window.open antes de clickear Formulario Compacto
-        await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
-
-        // Buscar y clickear "Formulario Compacto"
-        const posCompacto = await page.evaluate(() => {
-          const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
-          const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
-          if (!el) return null;
-          const rect = el.getBoundingClientRect();
-          if (rect.width === 0 || rect.height === 0) return null;
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        });
-
-        if (!posCompacto) {
-          log.push(`  ${period}: No se encontró botón "Formulario Compacto"`);
-          res.error = "Sin botón Formulario Compacto";
-          resultados.push(res);
-          continue;
-        }
-
-        await page.mouse.click(posCompacto.x, posCompacto.y);
-        await page.waitForTimeout(2000);
-
-        // Leer URL capturada de window.open
-        const windowOpenCalls = await page.evaluate(() => (window as any).__windowOpenCalls ?? []).catch(() => []);
-        res.window_open_calls = windowOpenCalls;
-
+        // Si ya tenemos codInt de sesión, construir URL directamente sin click adicional
         let pdfUrl = "";
-        if (windowOpenCalls.length > 0) {
-          const realUrl: string = windowOpenCalls[0][0];
-          if (realUrl && realUrl !== ":") {
+        if (codIntSesion) {
+          pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioDelDom.folio}&rut=${rutDigitos}&form=029&codInt=${codIntSesion}`;
+          res.pdf_url_source = "codInt_reutilizado";
+        } else {
+          // Primera vez: hacer click en "Formulario Compacto" para capturar codInt
+          await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
+          const posCompacto = await page.evaluate(() => {
+            const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
+            const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
+            if (!el) return null;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          });
+          if (!posCompacto) {
+            log.push(`  ${period}: No se encontró botón "Formulario Compacto"`);
+            res.error = "Sin botón Formulario Compacto";
+            resultados.push(res);
+            continue;
+          }
+          await page.mouse.click(posCompacto.x, posCompacto.y);
+          await page.waitForTimeout(2000);
+          const calls = await page.evaluate(() => (window as any).__windowOpenCalls ?? []);
+          if (calls.length > 0 && calls[0][0] && calls[0][0] !== ":") {
+            const realUrl: string = calls[0][0];
+            const codIntM = realUrl.match(/[?&]codInt=([^&]+)/i);
+            if (codIntM) {
+              codIntSesion = codIntM[1];
+              log.push(`  codInt de sesión capturado: ${codIntSesion}`);
+            }
             pdfUrl = realUrl;
           }
+          res.pdf_url_source = "window_open";
         }
 
-        // Fallback: construir URL con folio conocido (codInt=V no funciona, así que necesitamos la URL real)
         if (!pdfUrl) {
-          log.push(`  ${period}: window.open no capturó URL`);
+          log.push(`  ${period}: Sin URL de PDF`);
           res.error = "Sin URL de PDF";
           resultados.push(res);
           continue;
