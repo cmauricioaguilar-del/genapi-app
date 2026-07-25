@@ -238,9 +238,11 @@ export async function GET(req: NextRequest) {
         }
 
         let capturedUrl = "";
+        const allReqs: string[] = [];
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
-          if (u.includes("formCompacto") && !capturedUrl) capturedUrl = u;
+          allReqs.push(u.substring(0, 120));
+          if (u.toLowerCase().includes("formcompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
 
@@ -251,6 +253,7 @@ export async function GET(req: NextRequest) {
           if (capturedUrl) break;
         }
         context.off("request", requestHandler);
+        log.push(`  ${period}: reqs (${allReqs.length}): ${JSON.stringify(allReqs.slice(0, 8))}`);
 
         for (const p of context.pages()) {
           if (p !== page) await p.close().catch(() => {});
