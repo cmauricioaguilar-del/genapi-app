@@ -128,36 +128,62 @@ export async function GET(req: NextRequest) {
       try {
         log.push(`--- Procesando ${period} (fila y=${filaY}) ---`);
 
-        // Interceptar window.open para este mes
+        // Instalar interceptor de window.open (solo la primera vez)
         await page.evaluate(() => {
-          (window as any).__windowOpenCalls = [];
           if (!(window as any).__windowOpenPatched) {
             const orig = window.open.bind(window);
             window.open = function(...args: any[]) {
+              (window as any).__windowOpenCalls = (window as any).__windowOpenCalls ?? [];
               (window as any).__windowOpenCalls.push(args.map(String));
               return orig(...args);
             };
             (window as any).__windowOpenPatched = true;
-          } else {
-            // Solo limpiar las llamadas previas
           }
+          (window as any).__windowOpenCalls = [];
+        });
+
+        // Leer folio actual antes de hacer clic (para detectar el cambio)
+        const folioAntes = await page.evaluate(() => {
+          const all = Array.from(document.querySelectorAll("td, div, span"));
+          for (const el of all) {
+            const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+            if (m) return m[1];
+          }
+          return null;
         });
 
         // Click en la fila del mes
         await page.mouse.click(531.9296875, filaY);
-        await page.waitForTimeout(4000);
 
-        // Extraer folio del DOM
-        const folioDelDom = await page.evaluate(() => {
-          const all = Array.from(document.querySelectorAll("td, div, span"));
-          for (const el of all) {
-            const t = el.textContent?.trim() ?? "";
-            const m = t.match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
-            if (m) return { folio: m[1], tipo: m[2] };
-          }
-          return null;
-        });
+        // Esperar hasta que el folio en el panel cambie (máx 8s)
+        let folioDelDom: { folio: string; tipo: string } | null = null;
+        for (let intento = 0; intento < 16; intento++) {
+          await page.waitForTimeout(500);
+          const found = await page.evaluate((folioAnterior: string | null) => {
+            const all = Array.from(document.querySelectorAll("td, div, span"));
+            for (const el of all) {
+              const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+              if (m && m[1] !== folioAnterior) return { folio: m[1], tipo: m[2] };
+            }
+            return null;
+          }, folioAntes);
+          if (found) { folioDelDom = found; break; }
+        }
+
+        // Si no cambió, puede ser el primer mes o el mismo folio real — aceptarlo igual
+        if (!folioDelDom) {
+          folioDelDom = await page.evaluate(() => {
+            const all = Array.from(document.querySelectorAll("td, div, span"));
+            for (const el of all) {
+              const m = el.textContent?.trim().match(/^(\d{8,12})\s*-\s*(DECLARACION VIGENTE|DECLARACION RECTIFICATORIA|DECLARACION PRIMITIVA)/i);
+              if (m) return { folio: m[1], tipo: m[2] };
+            }
+            return null;
+          });
+        }
+
         res.folio_dom = folioDelDom;
+        res.folio_antes = folioAntes;
 
         if (!folioDelDom) {
           log.push(`  ${period}: Sin folio en DOM`);
@@ -166,7 +192,7 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // Limpiar llamadas previas de window.open y preparar para capturar la nueva
+        // Limpiar window.open antes de clickear Formulario Compacto
         await page.evaluate(() => { (window as any).__windowOpenCalls = []; });
 
         // Buscar y clickear "Formulario Compacto"
