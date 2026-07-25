@@ -31,6 +31,83 @@ async function leerFolio(page: import("playwright").Page): Promise<{ folio: stri
   });
 }
 
+// Hace click en el contador de declaraciones 2026 para expandir los meses
+async function expandirMeses(page: import("playwright").Page, log: string[]): Promise<boolean> {
+  const posNum = await page.evaluate(() => {
+    const tds = Array.from(document.querySelectorAll("td, a, span"));
+    const el = tds.find(e => {
+      const t = e.textContent?.trim() ?? "";
+      return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
+    });
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  if (!posNum) {
+    log.push("  expandirMeses: contador no encontrado");
+    return false;
+  }
+  await page.mouse.click(posNum.x, posNum.y);
+  log.push(`  expandirMeses: click en (${posNum.x}, ${posNum.y})`);
+  // Esperar que aparezcan las celdas de meses
+  for (let t = 0; t < 20; t++) {
+    await page.waitForTimeout(500);
+    const ok = await page.evaluate(() => {
+      const tds = Array.from(document.querySelectorAll("td"));
+      return tds.some(el => {
+        const txt = el.textContent?.trim() ?? "";
+        return txt === "Declaración sin observaciones." || txt === "Declaracion sin observaciones.";
+      });
+    });
+    if (ok) { log.push("  expandirMeses: meses visibles"); return true; }
+  }
+  log.push("  expandirMeses: meses no aparecieron tras 10s");
+  return false;
+}
+
+// Captura coordenadas de cada fila de mes (texto "Declaración sin observaciones.")
+async function capturarCandidatos(page: import("playwright").Page): Promise<{ x: number; y: number }[]> {
+  return page.evaluate(() => {
+    const tds = Array.from(document.querySelectorAll("td"));
+    const found: { x: number; y: number }[] = [];
+    for (const el of tds) {
+      const t = el.textContent?.trim() ?? "";
+      if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          found.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        }
+      }
+    }
+    found.sort((a, b) => a.y - b.y);
+    const dedup: { x: number; y: number }[] = [];
+    for (const p of found) {
+      if (!dedup.length || Math.abs(p.y - dedup[dedup.length - 1].y) > 5) dedup.push(p);
+    }
+    return dedup;
+  });
+}
+
+// Hace click en "Volver" — regresa a la tabla de años (imagen 5)
+async function clickVolver(page: import("playwright").Page, log: string[]) {
+  const pos = await page.evaluate(() => {
+    const all = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"));
+    const el = all.find(e => e.textContent?.trim() === "Volver" || (e as HTMLInputElement).value === "Volver");
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+  if (pos) {
+    await page.mouse.click(pos.x, pos.y);
+    log.push(`  Volver clickeado (${pos.x}, ${pos.y})`);
+    await page.waitForTimeout(3000);
+  } else {
+    log.push("  Volver no encontrado — esperando 3s");
+    await page.waitForTimeout(3000);
+  }
+}
+
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (secret !== (process.env.CRON_SECRET ?? "")) {
@@ -110,68 +187,40 @@ export async function GET(req: NextRequest) {
     await page.waitForTimeout(12000);
     log.push("Página F29 cargada");
 
-    // 3. CLICK EN EL CONTADOR (ej: "5") PARA EXPANDIR TABLA DE MESES
-    const posNum = await page.evaluate(() => {
-      const tds = Array.from(document.querySelectorAll("td, a, span"));
-      const el = tds.find(e => {
-        const t = e.textContent?.trim() ?? "";
-        return /^\d+$/.test(t) && parseInt(t) > 0 && parseInt(t) < 20;
-      });
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    });
-    if (!posNum) {
-      await context.close();
-      return NextResponse.json({ error: "No se encontró contador de declaraciones", log });
-    }
-    await page.mouse.click(posNum.x, posNum.y);
-    await page.waitForTimeout(8000);
-    log.push(`Click en contador (${posNum.x}, ${posNum.y})`);
-
-    // 4. CAPTURAR COORDENADAS DE LAS CELDAS DE MESES (una sola vez, con la tabla ya expandida)
-    const candidatos = await page.evaluate(() => {
-      const tds = Array.from(document.querySelectorAll("td"));
-      const found: { x: number; y: number }[] = [];
-      for (const el of tds) {
-        const t = el.textContent?.trim() ?? "";
-        if (t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.") {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            found.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-          }
-        }
-      }
-      found.sort((a, b) => a.y - b.y);
-      const dedup: { x: number; y: number }[] = [];
-      for (const p of found) {
-        if (!dedup.length || Math.abs(p.y - dedup[dedup.length - 1].y) > 5) dedup.push(p);
-      }
-      return dedup;
-    });
-    log.push(`Celdas encontradas: ${candidatos.length} → ${JSON.stringify(candidatos)}`);
-
-    if (candidatos.length < PERIODOS.length) {
-      await context.close();
-      return NextResponse.json({ error: `Solo ${candidatos.length} celdas, se esperaban ${PERIODOS.length}`, log });
-    }
-
-    // codInt es de sesión — capturado solo la primera vez via popup
-    let codIntSesion = "";
-
-    // 5. ITERAR CADA MES — flujo manual: click mes → folio → Formulario Compacto → PDF → cerrar popup → Volver → repetir
+    // 3. ITERAR CADA MES — flujo correcto:
+    //    expandir meses → click fila → folio → Formulario Compacto → popup → PDF → cerrar popup → Volver → repetir
     for (let i = 0; i < PERIODOS.length; i++) {
       const period = PERIODOS[i];
-      const celda = candidatos[i];
-      const res: Record<string, any> = { period, celda };
+      const res: Record<string, any> = { period };
 
       try {
-        log.push(`--- ${period} (celda ${i}: x=${celda.x} y=${celda.y}) ---`);
+        // Expandir meses (desde tabla de años)
+        log.push(`--- ${period} (mes ${i + 1}/${PERIODOS.length}) ---`);
+        const expandido = await expandirMeses(page, log);
+        if (!expandido) {
+          res.error = "No se pudo expandir meses";
+          resultados.push(res);
+          continue;
+        }
+        await page.waitForTimeout(2000);
+
+        // Capturar coordenadas frescas en cada iteración
+        const candidatos = await capturarCandidatos(page);
+        log.push(`  Celdas: ${candidatos.length} → mes[${i}]=${JSON.stringify(candidatos[i])}`);
+
+        if (candidatos.length <= i) {
+          res.error = `Solo ${candidatos.length} celdas, se necesita índice ${i}`;
+          resultados.push(res);
+          continue;
+        }
+
+        const celda = candidatos[i];
+        res.celda = celda;
 
         // Click en la fila del mes
         await page.mouse.click(celda.x, celda.y);
 
-        // Esperar que aparezca el folio del mes en el panel de detalle (máx 10s)
+        // Esperar folio en panel de detalle (máx 10s)
         let folioDelDom: { folio: string; tipo: string } | null = null;
         for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
@@ -184,62 +233,48 @@ export async function GET(req: NextRequest) {
           log.push(`  ${period}: Sin folio en DOM`);
           res.error = "Sin folio en DOM";
           resultados.push(res);
-          // Intentar volver de todas formas para no romper el flujo
           await clickVolver(page, log);
           continue;
         }
         log.push(`  ${period}: folio=${folioDelDom.folio}`);
 
-        // Construir URL del PDF
-        let pdfUrl = "";
+        // Buscar botón "Formulario Compacto"
+        const posCompacto = await page.evaluate(() => {
+          const all = Array.from(document.querySelectorAll("a, button, td, span, div"));
+          const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return null;
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        });
 
-        if (codIntSesion) {
-          // Meses 2-5: reutilizar codInt con el folio propio del mes
-          pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioDelDom.folio}&rut=${rutDigitos}&form=029&codInt=${codIntSesion}`;
-          res.pdf_url_source = "folio_dom+codInt_sesion";
-          log.push(`  ${period}: URL construida con folio+codInt`);
-        } else {
-          // Mes 1: capturar codInt via popup real
-          const posCompacto = await page.evaluate(() => {
-            const all = Array.from(document.querySelectorAll("a, button, td, span, div"));
-            const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
-            if (!el) return null;
-            const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return null;
-            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-          });
-
-          if (!posCompacto) {
-            log.push(`  ${period}: No se encontró "Formulario Compacto"`);
-            res.error = "Sin botón Formulario Compacto";
-            resultados.push(res);
-            await clickVolver(page, log);
-            continue;
-          }
-
-          // Escuchar el popup ANTES de clickear
-          const popupPromise = context.waitForEvent("page", { timeout: 12000 }).catch(() => null);
-          await page.mouse.click(posCompacto.x, posCompacto.y);
-          const popup = await popupPromise;
-
-          if (popup) {
-            // Esperar que el popup navegue a la URL real (desde ":" a formCompacto)
-            await popup.waitForURL((url) => url.href.includes("formCompacto"), { timeout: 10000 }).catch(() => {});
-            const realUrl = popup.url();
-            log.push(`  ${period}: popup URL = ${realUrl}`);
-
-            if (realUrl && realUrl.includes("formCompacto")) {
-              pdfUrl = realUrl;
-              const m = realUrl.match(/[?&]codInt=([^&]+)/i);
-              if (m) { codIntSesion = m[1]; log.push(`  codInt sesión: ${codIntSesion}`); }
-            }
-
-            // Cerrar popup (ya tenemos la URL)
-            await popup.close().catch(() => {});
-          }
-
-          res.pdf_url_source = "popup";
+        if (!posCompacto) {
+          log.push(`  ${period}: No se encontró "Formulario Compacto"`);
+          res.error = "Sin botón Formulario Compacto";
+          resultados.push(res);
+          await clickVolver(page, log);
+          continue;
         }
+
+        // Escuchar popup ANTES de clickear
+        const popupPromise = context.waitForEvent("page", { timeout: 12000 }).catch(() => null);
+        await page.mouse.click(posCompacto.x, posCompacto.y);
+        const popup = await popupPromise;
+
+        let pdfUrl = "";
+        if (popup) {
+          // Polling hasta que popup.url() contenga "formCompacto" (máx 10s)
+          for (let t = 0; t < 20; t++) {
+            await page.waitForTimeout(500);
+            const u = popup.url();
+            if (u && u.includes("formCompacto")) { pdfUrl = u; break; }
+          }
+          log.push(`  ${period}: popup URL = ${pdfUrl || popup.url()}`);
+          await popup.close().catch(() => {});
+        }
+
+        res.pdf_url_source = "popup";
+        res.pdf_url = pdfUrl;
 
         if (!pdfUrl) {
           log.push(`  ${period}: Sin URL de PDF`);
@@ -249,9 +284,7 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        res.pdf_url = pdfUrl;
-
-        // Descargar PDF con cookies de sesión (sin navegar la página)
+        // Descargar PDF con cookies de sesión
         const pdfResp = await context.request.get(pdfUrl, {
           headers: {
             "Referer": "https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29",
@@ -296,7 +329,7 @@ export async function GET(req: NextRequest) {
         log.push(`  ${period}: PDF guardado (${res.guardado}) len=${buf.length}`);
         res.error = null;
 
-        // Click "Volver" para regresar a tabla de meses (listo para el siguiente)
+        // Volver a tabla de años para el siguiente mes
         await clickVolver(page, log);
 
       } catch (e: any) {
@@ -308,7 +341,7 @@ export async function GET(req: NextRequest) {
       resultados.push(res);
     }
 
-    // 6. LOGOUT
+    // LOGOUT
     await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
     await context.close();
     log.push("Logout OK");
@@ -321,36 +354,4 @@ export async function GET(req: NextRequest) {
 
   const exitosos = resultados.filter(r => r.pdf_ok && !r.error).length;
   return NextResponse.json({ ok: exitosos === PERIODOS.length, exitosos, total: PERIODOS.length, resultados, log });
-}
-
-// Hace click en "Volver" y espera que vuelva la tabla de meses
-async function clickVolver(page: import("playwright").Page, log: string[]) {
-  const pos = await page.evaluate(() => {
-    const all = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"));
-    const el = all.find(e => e.textContent?.trim() === "Volver" || (e as HTMLInputElement).value === "Volver");
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return null;
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  });
-
-  if (pos) {
-    await page.mouse.click(pos.x, pos.y);
-    log.push(`  Volver clickeado (${pos.x}, ${pos.y})`);
-    // Esperar que reaparezcan las celdas de meses (tabla de meses visible)
-    for (let t = 0; t < 14; t++) {
-      await page.waitForTimeout(500);
-      const hayTabla = await page.evaluate(() => {
-        const tds = Array.from(document.querySelectorAll("td"));
-        return tds.some(el => {
-          const t = el.textContent?.trim() ?? "";
-          return t === "Declaración sin observaciones." || t === "Declaracion sin observaciones.";
-        });
-      });
-      if (hayTabla) { log.push("  Tabla de meses visible"); break; }
-    }
-  } else {
-    log.push("  Volver no encontrado — esperando 3s");
-    await page.waitForTimeout(3000);
-  }
 }
