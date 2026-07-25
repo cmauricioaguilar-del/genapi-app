@@ -238,22 +238,20 @@ export async function GET(req: NextRequest) {
         }
 
         let capturedUrl = "";
-        const allReqs: string[] = [];
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
-          allReqs.push(u.substring(0, 120));
           if (u.toLowerCase().includes("formcompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
 
         await page.mouse.click(posCompacto.x, posCompacto.y);
 
-        for (let t = 0; t < 20; t++) {
+        // 25s: mes 1 no necesita svcConsulta, meses 2+ sí (GWT consulta backend antes de abrir popup)
+        for (let t = 0; t < 50; t++) {
           await page.waitForTimeout(500);
           if (capturedUrl) break;
         }
         context.off("request", requestHandler);
-        log.push(`  ${period}: reqs (${allReqs.length}): ${JSON.stringify(allReqs.slice(0, 8))}`);
 
         for (const p of context.pages()) {
           if (p !== page) await p.close().catch(() => {});
