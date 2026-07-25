@@ -82,14 +82,20 @@ export async function GET(req: NextRequest) {
   }
 
   const empresaId = req.nextUrl.searchParams.get("empresaId");
+  const rut = req.nextUrl.searchParams.get("rut");
   const period = req.nextUrl.searchParams.get("period") ?? "202601";
-  if (!empresaId) return NextResponse.json({ error: "empresaId requerido." }, { status: 400 });
 
-  const empresa = await prisma.empresa.findUnique({
-    where: { id: empresaId },
-    select: { nombre: true, siiRut: true, siiClaveEnc: true },
+  // Listar todas las empresas si no se especifica empresaId ni rut
+  if (!empresaId && !rut) {
+    const todas = await prisma.empresa.findMany({ select: { id: true, nombre: true, rut: true } });
+    return NextResponse.json({ empresas: todas });
+  }
+
+  const empresa = await prisma.empresa.findFirst({
+    where: empresaId ? { id: empresaId } : { rut: { contains: rut! } },
+    select: { id: true, nombre: true, siiRut: true, siiClaveEnc: true },
   });
-  if (!empresa) return NextResponse.json({ error: "Empresa no encontrada." }, { status: 404 });
+  if (!empresa) return NextResponse.json({ error: "Empresa no encontrada.", empresaId, rut }, { status: 404 });
 
   const clave = decrypt(empresa.siiClaveEnc);
   const rutNorm = normalizarRut(empresa.siiRut);
