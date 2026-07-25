@@ -242,25 +242,21 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // Capturar URL via request interceptor — log de todos los requests para debug
+        // Capturar URL via request interceptor
         let capturedUrl = "";
-        const allReqs: string[] = [];
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
-          allReqs.push(u.substring(0, 120));
           if (u.includes("formCompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
 
         await page.mouse.click(posCompacto.x, posCompacto.y);
 
-        // Esperar hasta 10s a que llegue la request
         for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
           if (capturedUrl) break;
         }
         context.off("request", requestHandler);
-        log.push(`  ${period}: requests capturadas (${allReqs.length}): ${JSON.stringify(allReqs.slice(0, 10))}`);
 
         // Cerrar todos los popups abiertos para que GWT cree una ventana nueva el próximo mes
         for (const p of context.pages()) {
