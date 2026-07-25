@@ -379,7 +379,20 @@ export async function GET(req: NextRequest) {
     const windowOpenCalls = await page.evaluate(() => (window as any).__windowOpenCalls ?? []).catch(() => []);
     resultado.window_open_calls = windowOpenCalls;
 
-    // Esperar el popup
+    // Extraer folio+codInt de la URL real de window.open
+    if (windowOpenCalls.length > 0) {
+      const realUrl: string = windowOpenCalls[0][0];
+      if (realUrl && realUrl !== ":") {
+        const folioM = realUrl.match(/[?&]folio=(\d+)/i);
+        const codIntM = realUrl.match(/[?&]codInt=([^&]+)/i);
+        if (folioM) folioCapturado = folioM[1];
+        if (codIntM) codIntCapturado = codIntM[1];
+        resultado.real_pdf_url = realUrl;
+        console.log(`[F29] URL real de window.open: ${realUrl}`);
+      }
+    }
+
+    // Esperar el popup y leer su URL final (GWT navega el popup después del open(":"))
     const popup = await popupPromise;
     if (popup) {
       try {
@@ -389,19 +402,12 @@ export async function GET(req: NextRequest) {
         resultado.popup_final_url = popupFinalUrl;
         console.log(`[F29] popup URL final: ${popupFinalUrl}`);
 
-        // Capturar bytes si es PDF
-        const popupContent = await popup.evaluate(() => document.title + " | " + document.body?.innerText?.slice(0, 200)).catch(() => "");
-        resultado.popup_content_sample = popupContent;
-
-        // Intentar descargar el PDF desde el popup
-        const popupResponse = await popup.evaluate(async (url) => {
-          try {
-            const r = await fetch(url);
-            const ct = r.headers.get("content-type") ?? "";
-            return { ok: r.ok, status: r.status, ct };
-          } catch (e) { return { error: String(e) }; }
-        }, popup.url()).catch(() => null);
-        resultado.popup_response_info = popupResponse;
+        // Intentar extraer folio/codInt de la URL final del popup si no los tenemos
+        if (!folioCapturado && popupFinalUrl && popupFinalUrl !== ":") {
+          const folioM = popupFinalUrl.match(/[?&]folio=(\d+)/i);
+          const codIntM = popupFinalUrl.match(/[?&]codInt=([^&]+)/i);
+          if (folioM) { folioCapturado = folioM[1]; codIntCapturado = codIntM?.[1] ?? "V"; }
+        }
       } catch (e: any) {
         resultado.popup_error = (e as Error).message;
       }
@@ -409,13 +415,9 @@ export async function GET(req: NextRequest) {
       resultado.popup_captured = false;
     }
 
-    await page.waitForTimeout(4000);
-    resultado.rfi_urls_after_compacto = rfiUrls.slice();
-    resultado.popup_urls_after_compacto = popupUrls.slice();
-
-    // También intentar capturar folio de URLs interceptadas
-    const todasUrls2 = [...rfiUrls, ...popupUrls];
+    // También intentar capturar folio de URLs interceptadas como fallback
     if (!folioCapturado) {
+      const todasUrls2 = [...rfiUrls, ...popupUrls];
       for (const url of todasUrls2) {
         const folioM = url.match(/[?&]folio=(\d+)/i);
         const codIntM = url.match(/[?&]codInt=([^&]+)/i);
@@ -425,38 +427,53 @@ export async function GET(req: NextRequest) {
 
     await page.unroute("**/*rfiInternet*");
 
-    // 4. DESCARGAR PDF CON EL FOLIO CAPTURADO
+    // 4. DESCARGAR PDF CON LA URL REAL (folio+codInt capturados desde window.open)
     if (folioCapturado) {
       resultado.folio = folioCapturado;
       resultado.codInt = codIntCapturado;
       const pdfUrl = `https://www4.sii.cl/rfiInternet/formCompacto?folio=${folioCapturado}&rut=${rutDigitos}&form=029&codInt=${codIntCapturado}`;
       resultado.pdf_url = pdfUrl;
 
-      // Si el popup ya capturó el PDF, usarlo; si no, intentar descarga directa
-      await page.waitForTimeout(2000); // dar tiempo al popup para cargar
+      // Primero verificar si el popup ya capturó el PDF
       let pdfBytes: Buffer | null = pdfBytesPopup;
 
       if (!pdfBytes) {
-        // Descarga directa con las cookies de sesión actuales
+        // Navegar directamente a la URL real con las cookies de sesión actuales
+        let capturedPdfBytes: Buffer | null = null;
         const pdfHandler = async (response: import("playwright").Response) => {
           const ct = response.headers()["content-type"] ?? "";
           const u = response.url();
-          if (ct.includes("pdf") || ct.includes("octet") || u.includes("formCompacto")) {
+          if (ct.includes("pdf") || ct.includes("octet-stream") || u.includes("formCompacto") || u.includes("rfiInternet")) {
             const buf = await response.body().catch(() => null);
-            if (buf && buf.length > 500) pdfBytes = buf;
+            if (buf && buf.length > 500) {
+              console.log(`[F29 PDF] Respuesta capturada len=${buf.length} ct=${ct} url=${u}`);
+              capturedPdfBytes = buf;
+            }
           }
         };
         page.on("response", pdfHandler);
-        await page.goto(pdfUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(4000);
+        await page.goto(pdfUrl, { waitUntil: "load", timeout: 20000 }).catch(() => {});
+        await page.waitForTimeout(3000);
         page.off("response", pdfHandler);
+        pdfBytes = capturedPdfBytes;
+
+        // Si no capturó vía response, leer el contenido de la página directamente
+        if (!pdfBytes) {
+          const pageContent = await page.evaluate(() => document.body?.innerText?.slice(0, 200) ?? "").catch(() => "");
+          resultado.pdf_page_content = pageContent;
+          // Intentar leer el buffer de la página
+          const rawContent = await page.evaluate(() => {
+            const pre = document.querySelector("pre");
+            return pre ? pre.textContent?.slice(0, 50) : null;
+          }).catch(() => null);
+          resultado.pdf_raw_sample = rawContent;
+        }
       }
 
       resultado.pdf_bytes = pdfBytes ? (pdfBytes as Buffer).length : 0;
       resultado.pdf_inicio = pdfBytes ? (pdfBytes as Buffer).slice(0, 4).toString("ascii") : "";
       resultado.pdf_ok = resultado.pdf_inicio === "%PDF";
       resultado.pdf_from_popup = !!pdfBytesPopup;
-      resultado.popup_urls_final = popupUrls;
     } else {
       // Diagnóstico: mostrar DOM de todos los frames para entender la estructura
       resultado.frames_dom = [];
