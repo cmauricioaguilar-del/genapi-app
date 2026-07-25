@@ -345,32 +345,71 @@ export async function GET(req: NextRequest) {
       codIntCapturado = "V"; // formCompacto usa "V" para declaración vigente
     }
 
-    // Inspeccionar el botón "Formulario Compacto" antes de clickear
+    // Interceptar window.open para capturar la URL que GWT pasa al abrir el popup
+    await page.evaluate(() => {
+      const orig = window.open.bind(window);
+      (window as any).__windowOpenCalls = [];
+      window.open = function(...args: any[]) {
+        (window as any).__windowOpenCalls.push(args.map(String));
+        return orig(...args);
+      };
+    });
+
+    // Inspeccionar el botón "Formulario Compacto"
     const infoCompacto = await page.evaluate(() => {
       const all = Array.from(document.querySelectorAll("a, button, input, td, span, div"));
       const el = all.find(e => e.textContent?.trim() === "Formulario Compacto");
       if (!el) return null;
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return null;
-      return {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-        tag: el.tagName,
-        text: el.textContent?.trim(),
-        href: (el as HTMLAnchorElement).href ?? "",
-        onclick: el.getAttribute("onclick") ?? "",
-        // Buscar el onclick en padres
-        parentOnclick: el.parentElement?.getAttribute("onclick") ?? "",
-        parentHref: (el.parentElement as HTMLAnchorElement)?.href ?? "",
-      };
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, tag: el.tagName };
     });
     resultado.pos_compacto = infoCompacto;
+
+    // Usar page.on("popup") para capturar el popup ANTES de que se cierre
+    const popupPromise = page.waitForEvent("popup", { timeout: 12000 }).catch(() => null);
 
     if (infoCompacto) {
       await page.mouse.click(infoCompacto.x, infoCompacto.y);
       resultado.click_form_compacto = `mouse_click:${infoCompacto.tag}@(${infoCompacto.x},${infoCompacto.y})`;
     }
-    await page.waitForTimeout(6000);
+
+    // Capturar la URL que GWT pasó a window.open
+    await page.waitForTimeout(2000);
+    const windowOpenCalls = await page.evaluate(() => (window as any).__windowOpenCalls ?? []).catch(() => []);
+    resultado.window_open_calls = windowOpenCalls;
+
+    // Esperar el popup
+    const popup = await popupPromise;
+    if (popup) {
+      try {
+        await popup.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+        await popup.waitForTimeout(3000);
+        const popupFinalUrl = popup.url();
+        resultado.popup_final_url = popupFinalUrl;
+        console.log(`[F29] popup URL final: ${popupFinalUrl}`);
+
+        // Capturar bytes si es PDF
+        const popupContent = await popup.evaluate(() => document.title + " | " + document.body?.innerText?.slice(0, 200)).catch(() => "");
+        resultado.popup_content_sample = popupContent;
+
+        // Intentar descargar el PDF desde el popup
+        const popupResponse = await popup.evaluate(async (url) => {
+          try {
+            const r = await fetch(url);
+            const ct = r.headers.get("content-type") ?? "";
+            return { ok: r.ok, status: r.status, ct };
+          } catch (e) { return { error: String(e) }; }
+        }, popup.url()).catch(() => null);
+        resultado.popup_response_info = popupResponse;
+      } catch (e: any) {
+        resultado.popup_error = (e as Error).message;
+      }
+    } else {
+      resultado.popup_captured = false;
+    }
+
+    await page.waitForTimeout(4000);
     resultado.rfi_urls_after_compacto = rfiUrls.slice();
     resultado.popup_urls_after_compacto = popupUrls.slice();
 
