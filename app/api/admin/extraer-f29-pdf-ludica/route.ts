@@ -242,7 +242,7 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // Capturar URL via request interceptor + cerrar popup para que GWT cree uno nuevo en el siguiente mes
+        // Capturar URL via request interceptor
         let capturedUrl = "";
         const requestHandler = (req: import("playwright").Request) => {
           if (req.url().includes("formCompacto") && !capturedUrl) {
@@ -250,9 +250,6 @@ export async function GET(req: NextRequest) {
           }
         };
         context.on("request", requestHandler);
-
-        // Escuchar popup antes del click para poder cerrarlo después
-        const popupPromise = context.waitForEvent("page", { timeout: 12000 }).catch(() => null);
 
         await page.mouse.click(posCompacto.x, posCompacto.y);
 
@@ -263,9 +260,11 @@ export async function GET(req: NextRequest) {
         }
         context.off("request", requestHandler);
 
-        // Cerrar popup para que GWT no reutilice la referencia en el siguiente mes
-        const popup = await popupPromise;
-        if (popup && !popup.isClosed()) await popup.close().catch(() => {});
+        // Cerrar todos los popups abiertos para que GWT cree una ventana nueva el próximo mes
+        for (const p of context.pages()) {
+          if (p !== page) await p.close().catch(() => {});
+        }
+        await page.waitForTimeout(500);
 
         log.push(`  ${period}: capturedUrl = ${capturedUrl}`);
         res.pdf_url = capturedUrl;
