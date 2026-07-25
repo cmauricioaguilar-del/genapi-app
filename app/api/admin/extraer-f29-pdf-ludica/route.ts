@@ -255,12 +255,7 @@ export async function GET(req: NextRequest) {
             pdfUrl = realUrl;
           }
           res.pdf_url_source = "window_open";
-
-          // Cerrar popup para no bloquear clicks siguientes
-          await page.waitForTimeout(500);
-          for (const p of context.pages()) {
-            if (p !== page) await p.close().catch(() => {});
-          }
+          // No cerrar el popup — cerrarlo hace que GWT resetee el panel de detalle
         }
 
         if (!pdfUrl) {
