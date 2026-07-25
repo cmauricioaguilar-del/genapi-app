@@ -222,12 +222,13 @@ export async function GET(req: NextRequest) {
         log.push(`  ${period}: folio=${folioDelDom.folio}`);
 
         const posCompacto = await page.evaluate(() => {
-          const el = Array.from(document.querySelectorAll("a, button, td, span, div"))
-            .find(e => e.textContent?.trim() === "Formulario Compacto");
-          if (!el) return null;
-          const rect = el.getBoundingClientRect();
-          if (rect.width === 0 || rect.height === 0) return null;
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          const candidates = Array.from(document.querySelectorAll("a, button, td, span, div"))
+            .filter(e => e.textContent?.trim() === "Formulario Compacto")
+            .map(e => ({ el: e, rect: e.getBoundingClientRect() }))
+            .filter(({ rect }) => rect.width > 0 && rect.height > 0);
+          if (!candidates.length) return null;
+          const best = candidates.reduce((a, b) => a.rect.top > b.rect.top ? a : b);
+          return { x: best.rect.left + best.rect.width / 2, y: best.rect.top + best.rect.height / 2 };
         });
         if (!posCompacto) {
           log.push(`  ${period}: No se encontró "Formulario Compacto"`);
@@ -240,14 +241,13 @@ export async function GET(req: NextRequest) {
         let capturedUrl = "";
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
-          if (u.toLowerCase().includes("formcompacto") && !capturedUrl) capturedUrl = u;
+          if (u.includes("formCompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
 
         await page.mouse.click(posCompacto.x, posCompacto.y);
 
-        // 25s: mes 1 no necesita svcConsulta, meses 2+ sí (GWT consulta backend antes de abrir popup)
-        for (let t = 0; t < 50; t++) {
+        for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
           if (capturedUrl) break;
         }
