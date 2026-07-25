@@ -224,7 +224,7 @@ export async function GET(req: NextRequest) {
 
           if (popup) {
             // Esperar que el popup navegue a la URL real (desde ":" a formCompacto)
-            await popup.waitForURL((url) => url.includes("formCompacto"), { timeout: 10000 }).catch(() => {});
+            await popup.waitForURL((url) => url.href.includes("formCompacto"), { timeout: 10000 }).catch(() => {});
             const realUrl = popup.url();
             log.push(`  ${period}: popup URL = ${realUrl}`);
 
