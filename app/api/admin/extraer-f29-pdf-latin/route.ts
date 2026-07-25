@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const EMPRESA_ID = "cmrunzwap00003so6vemz4lqd"; // Latin Computer SPA
-const PERIODOS = ["202601", "202602", "202603", "202604", "202605", "202606", "202607"];
+const PERIODOS = ["202601", "202602", "202603", "202604", "202605", "202606"];
 
 function normalizarRut(rut: string) {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();
