@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const EMPRESA_ID = "cmri21z6200263so3ei1bt08n"; // Lúdica Spa
-const PERIODOS = ["202601", "202602", "202603", "202604", "202605"];
+const PERIODOS = ["202601", "202602", "202603", "202604", "202605", "202606"];
 
 function normalizarRut(rut: string) {
   return rut.replace(/\./g, "").replace(/-/g, "").toUpperCase();

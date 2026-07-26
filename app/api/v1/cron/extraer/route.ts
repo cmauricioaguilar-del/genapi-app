@@ -16,9 +16,12 @@ export async function GET(req: NextRequest) {
   const mesActual = now.getMonth() + 1;
   const period = `${anio}${String(mesActual).padStart(2, "0")}`;
 
-  // Períodos del año actual hasta el mes actual (para backfill F29)
+  // El F29 del mes M está disponible desde el día 21 del mes M+1.
+  // Excluir meses cuyo F29 todavía no existe en SII.
+  const diaHoy = now.getDate();
+  const ultimoMesF29 = diaHoy >= 21 ? mesActual - 1 : mesActual - 2;
   const periodosAnio: string[] = [];
-  for (let m = 1; m <= mesActual; m++) {
+  for (let m = 1; m <= Math.max(0, ultimoMesF29); m++) {
     periodosAnio.push(`${anio}${String(m).padStart(2, "0")}`);
   }
 

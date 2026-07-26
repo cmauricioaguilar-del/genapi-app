@@ -47,19 +47,30 @@ export default async function Dashboard() {
       })
     : [];
 
-  // Agrupar: última por empresa+modulo
-  const ultimaPorEmpresaModulo = new Map<string, typeof todasExtracciones[0]>();
+  // Agrupar: última SUCCESS y última FAILED por empresa+modulo
+  const ultimaExitosa = new Map<string, typeof todasExtracciones[0]>();
+  const ultimaFallida = new Map<string, typeof todasExtracciones[0]>();
   for (const ext of todasExtracciones) {
     const key = `${ext.empresaId}::${ext.modulo}`;
-    if (!ultimaPorEmpresaModulo.has(key)) ultimaPorEmpresaModulo.set(key, ext);
+    if (ext.estado === "SUCCESS" && !ultimaExitosa.has(key)) ultimaExitosa.set(key, ext);
+    else if (ext.estado === "FAILED" && !ultimaFallida.has(key)) ultimaFallida.set(key, ext);
   }
 
   const empresasAcordeon = cliente.empresas.map((emp: { id: string; nombre: string }) => {
-    const ultimas = Array.from(ultimaPorEmpresaModulo.values())
-      .filter(e => e.empresaId === emp.id)
-      .map(e => ({ ...e, creadoEn: e.creadoEn.toISOString() }));
+    // Mostrar última SUCCESS; si nunca hubo éxito, mostrar última FAILED
+    const ultimas = MODULOS_VALIDOS
+      .map(modulo => {
+        const key = `${emp.id}::${modulo}`;
+        return ultimaExitosa.get(key) ?? ultimaFallida.get(key);
+      })
+      .filter(Boolean)
+      .map(e => ({ ...e!, creadoEn: e!.creadoEn.toISOString() }));
 
-    const modulosFallidos = ultimas.filter(e => e.estado === "FAILED").map(e => e.modulo);
+    // Error real: módulo que nunca tuvo éxito pero sí tiene fallas
+    const modulosFallidos = MODULOS_VALIDOS.filter(modulo => {
+      const key = `${emp.id}::${modulo}`;
+      return !ultimaExitosa.has(key) && ultimaFallida.has(key);
+    });
 
     return {
       id: emp.id,
