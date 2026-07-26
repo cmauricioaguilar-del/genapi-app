@@ -18,13 +18,21 @@ function notificar(empresaId: string, modulo: string, period: string, status: "S
   }).catch(() => {});
 }
 
+function periodoCerrado(period: string): boolean {
+  const now = new Date();
+  const actual = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+  return period < actual;
+}
+
 export async function obtenerOExtraerVentas(empresaId: string, siiRut: string, siiClaveEnc: string, period: string) {
-  const existing = await prisma.extraccion.findFirst({
-    where: { empresaId, period, modulo: "ventas", estado: "SUCCESS" },
-    include: { ventas: true },
-    orderBy: { creadoEn: "desc" },
-  });
-  if (existing && existing.ventas.length > 0) return { ok: true, data: existing.ventas, fromCache: true };
+  if (periodoCerrado(period)) {
+    const existing = await prisma.extraccion.findFirst({
+      where: { empresaId, period, modulo: "ventas", estado: "SUCCESS" },
+      include: { ventas: true },
+      orderBy: { creadoEn: "desc" },
+    });
+    if (existing && existing.ventas.length > 0) return { ok: true, data: existing.ventas, fromCache: true };
+  }
 
   const extraccion = await prisma.extraccion.create({ data: { empresaId, period, modulo: "ventas", estado: "RUNNING" } });
 
@@ -49,12 +57,14 @@ export async function obtenerOExtraerVentas(empresaId: string, siiRut: string, s
 }
 
 export async function obtenerOExtraerCompras(empresaId: string, siiRut: string, siiClaveEnc: string, period: string) {
-  const existing = await prisma.extraccion.findFirst({
-    where: { empresaId, period, modulo: "compras", estado: "SUCCESS" },
-    include: { compras: true },
-    orderBy: { creadoEn: "desc" },
-  });
-  if (existing && existing.compras.length > 0) return { ok: true, data: existing.compras, fromCache: true };
+  if (periodoCerrado(period)) {
+    const existing = await prisma.extraccion.findFirst({
+      where: { empresaId, period, modulo: "compras", estado: "SUCCESS" },
+      include: { compras: true },
+      orderBy: { creadoEn: "desc" },
+    });
+    if (existing && existing.compras.length > 0) return { ok: true, data: existing.compras, fromCache: true };
+  }
 
   const extraccion = await prisma.extraccion.create({ data: { empresaId, period, modulo: "compras", estado: "RUNNING" } });
 
@@ -79,12 +89,15 @@ export async function obtenerOExtraerCompras(empresaId: string, siiRut: string, 
 }
 
 export async function obtenerOExtraerHonorarios(empresaId: string, siiRut: string, siiClaveEnc: string, anio: string) {
-  const existing = await prisma.extraccion.findFirst({
-    where: { empresaId, period: anio, modulo: "honorarios", estado: "SUCCESS" },
-    include: { honorarios: true },
-    orderBy: { creadoEn: "desc" },
-  });
-  if (existing && existing.honorarios.length > 0) return { ok: true, data: existing.honorarios, fromCache: true };
+  const anioActual = String(new Date().getFullYear());
+  if (anio < anioActual) {
+    const existing = await prisma.extraccion.findFirst({
+      where: { empresaId, period: anio, modulo: "honorarios", estado: "SUCCESS" },
+      include: { honorarios: true },
+      orderBy: { creadoEn: "desc" },
+    });
+    if (existing && existing.honorarios.length > 0) return { ok: true, data: existing.honorarios, fromCache: true };
+  }
 
   const extraccion = await prisma.extraccion.create({ data: { empresaId, period: anio, modulo: "honorarios", estado: "RUNNING" } });
 
