@@ -78,29 +78,19 @@ async function capturarCandidatos(page: import("playwright").Page): Promise<{ x:
   });
 }
 
-async function clickVolver(page: import("playwright").Page, log: string[]) {
-  const pos = await page.evaluate(() => {
-    const el = Array.from(document.querySelectorAll("a, button, input[type=button], input[type=submit]"))
-      .find(e => e.textContent?.trim() === "Volver" || (e as HTMLInputElement).value === "Volver");
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return null;
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  });
-  if (pos) {
-    await page.mouse.click(pos.x, pos.y);
-    log.push(`  Volver clickeado (${pos.x}, ${pos.y})`);
-    await page.waitForTimeout(3000);
-  } else {
-    log.push("  Volver no encontrado — esperando 3s");
-    await page.waitForTimeout(3000);
-  }
-}
-
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
   if (secret !== (process.env.CRON_SECRET ?? "")) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+  }
+
+  const periodParam = req.nextUrl.searchParams.get("period");
+  const periodos = periodParam
+    ? PERIODOS.includes(periodParam) ? [periodParam] : []
+    : PERIODOS;
+
+  if (periodos.length === 0) {
+    return NextResponse.json({ error: `Período inválido: ${periodParam}. Válidos: ${PERIODOS.join(", ")}` }, { status: 400 });
   }
 
   const empresa = await prisma.empresa.findUnique({
@@ -125,86 +115,94 @@ export async function GET(req: NextRequest) {
   });
 
   try {
-    const context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-      locale: "es-CL",
-    });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      (window as any).chrome = { runtime: {} };
-    });
-    const page = await context.newPage();
-
-    // 1. LOGIN
-    log.push("Iniciando login...");
-    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", { waitUntil: "load", timeout: 30000 });
-    await page.waitForTimeout(1500);
-    await page.locator('[name="rutcntr"]').click();
-    await page.keyboard.press("Control+a");
-    await page.keyboard.type(rutConPuntos, { delay: 80 });
-    await page.locator('[name="clave"]').click();
-    await page.keyboard.press("Control+a");
-    await page.keyboard.type(clave, { delay: 80 });
-    await page.evaluate(({ rut, dv }: { rut: string; dv: string }) => {
-      const set = (name: string, val: string) => {
-        const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null;
-        if (el) el.value = val;
-      };
-      set("rut", rut); set("dv", dv); set("referencia", "https://homer.sii.cl/"); set("411", "");
-    }, { rut: rutDigitos, dv });
-    await page.waitForTimeout(500);
-    await Promise.all([
-      page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
-      page.locator('input[type="submit"], button[type="submit"]').first().click().catch(() =>
-        page.evaluate(() => (document.querySelector("form") as HTMLFormElement)?.submit())
-      ),
-    ]);
-    await page.waitForTimeout(3000);
-
-    const cookies = await page.context().cookies();
-    const loginOk = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE"));
-    if (!loginOk) {
-      await context.close();
-      return NextResponse.json({ error: "Login fallido", log });
-    }
-    log.push("Login OK");
-
-    // 2. NAVEGAR A F29
-    await page.goto("https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29", {
-      waitUntil: "domcontentloaded", timeout: 30000,
-    });
-    await page.waitForTimeout(12000);
-    log.push("Página F29 cargada");
-
-    // 3. ITERAR CADA MES
-    for (let i = 0; i < PERIODOS.length; i++) {
-      const period = PERIODOS[i];
+    for (let pi = 0; pi < periodos.length; pi++) {
+      const period = periodos[pi];
+      const i = PERIODOS.indexOf(period);
       const res: Record<string, any> = { period };
+      log.push(`--- ${period} (índice ${i}) ---`);
+
+      const context = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+        locale: "es-CL",
+      });
+      await context.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+        (window as any).chrome = { runtime: {} };
+      });
 
       try {
-        log.push(`--- ${period} (mes ${i + 1}/${PERIODOS.length}) ---`);
+        const page = await context.newPage();
 
+        // LOGIN
+        log.push("  Login...");
+        await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", { waitUntil: "load", timeout: 30000 });
+        await page.waitForTimeout(1500);
+        await page.locator('[name="rutcntr"]').click();
+        await page.keyboard.press("Control+a");
+        await page.keyboard.type(rutConPuntos, { delay: 80 });
+        await page.locator('[name="clave"]').click();
+        await page.keyboard.press("Control+a");
+        await page.keyboard.type(clave, { delay: 80 });
+        await page.evaluate(({ rut, dv }: { rut: string; dv: string }) => {
+          const set = (name: string, val: string) => {
+            const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null;
+            if (el) el.value = val;
+          };
+          set("rut", rut); set("dv", dv); set("referencia", "https://homer.sii.cl/"); set("411", "");
+        }, { rut: rutDigitos, dv });
+        await page.waitForTimeout(500);
+        await Promise.all([
+          page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
+          page.locator('input[type="submit"], button[type="submit"]').first().click().catch(() =>
+            page.evaluate(() => (document.querySelector("form") as HTMLFormElement)?.submit())
+          ),
+        ]);
+        await page.waitForTimeout(3000);
+
+        const cookies = await context.cookies();
+        const loginOk = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE"));
+        if (!loginOk) {
+          res.error = "Login fallido";
+          resultados.push(res);
+          await context.close();
+          continue;
+        }
+        log.push("  Login OK");
+
+        // NAVEGAR A F29
+        await page.goto("https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29", {
+          waitUntil: "domcontentloaded", timeout: 30000,
+        });
+        await page.waitForTimeout(12000);
+        log.push("  F29 cargado");
+
+        // EXPANDIR MESES
         const expandido = await expandirMeses(page, log);
         if (!expandido) {
           res.error = "No se pudo expandir meses";
           resultados.push(res);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
         await page.waitForTimeout(2000);
 
+        // CAPTURAR CANDIDATOS
         const candidatos = await capturarCandidatos(page);
         log.push(`  Celdas: ${candidatos.length} → mes[${i}]=${JSON.stringify(candidatos[i])}`);
         if (candidatos.length <= i) {
           res.error = `Solo ${candidatos.length} celdas, se necesita índice ${i}`;
           resultados.push(res);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
 
         const celda = candidatos[i];
         res.celda = celda;
-
         await page.mouse.click(celda.x, celda.y);
 
+        // ESPERAR FOLIO
         let folioDelDom: { folio: string; tipo: string } | null = null;
         for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
@@ -216,11 +214,13 @@ export async function GET(req: NextRequest) {
           log.push(`  ${period}: Sin folio en DOM`);
           res.error = "Sin folio en DOM";
           resultados.push(res);
-          await clickVolver(page, log);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
         log.push(`  ${period}: folio=${folioDelDom.folio}`);
 
+        // BUSCAR FORMULARIO COMPACTO
         const posCompacto = await page.evaluate(() => {
           const candidates = Array.from(document.querySelectorAll("a, button, td, span, div"))
             .filter(e => e.textContent?.trim() === "Formulario Compacto")
@@ -234,19 +234,19 @@ export async function GET(req: NextRequest) {
           log.push(`  ${period}: No se encontró "Formulario Compacto"`);
           res.error = "Sin botón Formulario Compacto";
           resultados.push(res);
-          await clickVolver(page, log);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
 
+        // INTERCEPTAR REQUEST
         let capturedUrl = "";
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
           if (u.includes("formCompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
-
         await page.mouse.click(posCompacto.x, posCompacto.y);
-
         for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
           if (capturedUrl) break;
@@ -262,13 +262,14 @@ export async function GET(req: NextRequest) {
         res.pdf_url = capturedUrl;
 
         if (!capturedUrl) {
-          log.push(`  ${period}: Sin URL de PDF`);
           res.error = "Sin URL de PDF";
           resultados.push(res);
-          await clickVolver(page, log);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
 
+        // DESCARGAR PDF
         const pdfResp = await context.request.get(capturedUrl, {
           headers: {
             "Referer": "https://www4.sii.cl/sifmConsultaInternet/index.html?dest=cifxx&form=29",
@@ -286,10 +287,12 @@ export async function GET(req: NextRequest) {
           log.push(`  ${period}: PDF inválido (len=${buf.length}, ct=${ct})`);
           res.error = "Respuesta no es PDF";
           resultados.push(res);
-          await clickVolver(page, log);
+          await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+          await context.close();
           continue;
         }
 
+        // GUARDAR EN BD
         const f29Existente = await prisma.f29Genapi.findFirst({
           where: { empresaId: EMPRESA_ID, period },
           select: { id: true },
@@ -312,21 +315,18 @@ export async function GET(req: NextRequest) {
         log.push(`  ${period}: PDF guardado (${res.guardado}) len=${buf.length}`);
         res.error = null;
 
-        await clickVolver(page, log);
+        await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
+        log.push(`  ${period}: Logout OK`);
 
       } catch (e: any) {
         res.error = e.message;
         log.push(`  ${period}: ERROR ${e.message}`);
-        await clickVolver(page, log).catch(() => {});
+      } finally {
+        await context.close();
       }
 
       resultados.push(res);
     }
-
-    // LOGOUT
-    await page.goto("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { timeout: 8000 }).catch(() => {});
-    await context.close();
-    log.push("Logout OK");
 
   } catch (e: any) {
     log.push(`ERROR GENERAL: ${e.message}`);
@@ -335,5 +335,5 @@ export async function GET(req: NextRequest) {
   }
 
   const exitosos = resultados.filter(r => r.pdf_ok && !r.error).length;
-  return NextResponse.json({ ok: exitosos === PERIODOS.length, exitosos, total: PERIODOS.length, resultados, log });
+  return NextResponse.json({ ok: exitosos === periodos.length, exitosos, total: periodos.length, resultados, log });
 }
