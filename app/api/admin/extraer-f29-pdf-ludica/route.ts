@@ -240,19 +240,33 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // INTERCEPTAR REQUEST
+        // INTERCEPTAR REQUEST (mecanismo dual: red + popup)
         let capturedUrl = "";
         const requestHandler = (req: import("playwright").Request) => {
           const u = req.url();
           if (u.includes("formCompacto") && !capturedUrl) capturedUrl = u;
         };
         context.on("request", requestHandler);
+        const popupPromise = context.waitForEvent("page").catch(() => null);
         await page.mouse.click(posCompacto.x, posCompacto.y);
         for (let t = 0; t < 20; t++) {
           await page.waitForTimeout(500);
           if (capturedUrl) break;
         }
         context.off("request", requestHandler);
+
+        if (!capturedUrl) {
+          const popup = await Promise.race([popupPromise, page.waitForTimeout(2000).then(() => null)]);
+          if (popup) {
+            await (popup as import("playwright").Page).waitForURL(
+              (u: URL) => u.href !== ":" && u.href !== "about:blank",
+              { timeout: 5000 }
+            ).catch(() => {});
+            const popupUrl = (popup as import("playwright").Page).url();
+            log.push(`  ${period}: popupUrl = ${popupUrl}`);
+            if (popupUrl.includes("formCompacto")) capturedUrl = popupUrl;
+          }
+        }
 
         for (const p of context.pages()) {
           if (p !== page) await p.close().catch(() => {});
