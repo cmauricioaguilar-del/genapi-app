@@ -47,29 +47,25 @@ export default async function Dashboard() {
       })
     : [];
 
-  // Agrupar: última SUCCESS y última FAILED por empresa+modulo
-  const ultimaExitosa = new Map<string, typeof todasExtracciones[0]>();
-  const ultimaFallida = new Map<string, typeof todasExtracciones[0]>();
+  // Última extracción por empresa+modulo sin importar estado (todasExtracciones viene desc)
+  const ultimaExtraccion = new Map<string, typeof todasExtracciones[0]>();
   for (const ext of todasExtracciones) {
     const key = `${ext.empresaId}::${ext.modulo}`;
-    if (ext.estado === "SUCCESS" && !ultimaExitosa.has(key)) ultimaExitosa.set(key, ext);
-    else if (ext.estado === "FAILED" && !ultimaFallida.has(key)) ultimaFallida.set(key, ext);
+    if (!ultimaExtraccion.has(key)) ultimaExtraccion.set(key, ext);
   }
 
   const empresasAcordeon = cliente.empresas.map((emp: { id: string; nombre: string }) => {
-    // Mostrar última SUCCESS; si nunca hubo éxito, mostrar última FAILED
     const ultimas = MODULOS_VALIDOS
       .map(modulo => {
         const key = `${emp.id}::${modulo}`;
-        return ultimaExitosa.get(key) ?? ultimaFallida.get(key);
+        return ultimaExtraccion.get(key);
       })
       .filter(Boolean)
       .map(e => ({ ...e!, creadoEn: e!.creadoEn.toISOString() }));
 
-    // Error real: módulo que nunca tuvo éxito pero sí tiene fallas
     const modulosFallidos = MODULOS_VALIDOS.filter(modulo => {
       const key = `${emp.id}::${modulo}`;
-      return !ultimaExitosa.has(key) && ultimaFallida.has(key);
+      return ultimaExtraccion.get(key)?.estado === "FAILED";
     });
 
     return {
