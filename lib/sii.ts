@@ -1,3 +1,4 @@
+import { chromium } from "playwright";
 import { decrypt } from "./encryption";
 
 export interface DocumentoSII {
@@ -101,22 +102,128 @@ export async function loginSII(rutDigitos: string, dv: string, clave: string): P
   }
 
   console.error("SII login failed for RUT", rutDigitos);
-  return null;
+  // Fallback con Playwright: maneja sesiones activas y otros bloqueos interactivos
+  console.warn(`[SII] Intentando login Playwright para RUT ${rutDigitos}...`);
+  return loginSIIConPlaywright(rutDigitos, dv, clave);
 }
 
 async function logoutSII(cookies: string): Promise<void> {
+  const headers = {
+    "Cookie": cookies,
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://zeusr.sii.cl/",
+  };
+  // Intentar todos los endpoints conocidos de logout del SII
+  await Promise.allSettled([
+    fetch("https://zeusr.sii.cl/cgi_AUT2000/autTermino.cgi", { headers, redirect: "follow" }),
+    fetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", { headers: { ...headers, Referer: "https://homer.sii.cl/" }, redirect: "follow" }),
+  ]);
+}
+
+async function loginSIIConPlaywright(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
+  const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+           "--disable-blink-features=AutomationControlled"],
+  });
+
   try {
-    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
-      method: "GET",
-      headers: {
-        "Cookie": cookies,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://zeusr.sii.cl/",
-      },
-      redirect: "follow",
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      locale: "es-CL",
     });
-  } catch {
-    // Ignorar errores de logout — lo importante es haber intentado
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      (window as any).chrome = { runtime: {} };
+    });
+    const page = await context.newPage();
+
+    await page.goto("https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html", {
+      waitUntil: "load", timeout: 30000,
+    });
+    await page.waitForTimeout(1500);
+
+    const rutField = page.locator('[name="rutcntr"]');
+    await rutField.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type(rutConPuntos, { delay: 80 });
+
+    const claveField = page.locator('[name="clave"]');
+    await claveField.click();
+    await page.keyboard.press("Control+a");
+    await page.keyboard.type(clave, { delay: 80 });
+
+    await page.evaluate(({ rut, dv }: { rut: string; dv: string }) => {
+      const setField = (name: string, value: string) => {
+        const el = document.querySelector(`[name="${name}"]`) as HTMLInputElement | null;
+        if (el) el.value = value;
+      };
+      setField("rut", rut);
+      setField("dv", dv);
+      setField("referencia", "https://homer.sii.cl/");
+      setField("411", "");
+    }, { rut: rutDigitos, dv });
+
+    await page.waitForTimeout(500);
+
+    await Promise.all([
+      page.waitForNavigation({ timeout: 15000, waitUntil: "domcontentloaded" }).catch(() => {}),
+      page.locator('input[type="submit"], button[type="submit"]').first().click().catch(() =>
+        page.evaluate(() => (document.querySelector("form") as HTMLFormElement)?.submit())
+      ),
+    ]);
+
+    await page.waitForTimeout(2000);
+
+    // Detectar página de "sesión ya activa" y cerrar la sesión anterior automáticamente
+    const bodyText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    const urlActual = page.url();
+    const sesionActivaDetectada =
+      bodyText.toLowerCase().includes("sesión activa") ||
+      bodyText.toLowerCase().includes("sesion activa") ||
+      bodyText.toLowerCase().includes("ya tiene una") ||
+      bodyText.toLowerCase().includes("cierre su sesión") ||
+      urlActual.toLowerCase().includes("decissession") ||
+      urlActual.toLowerCase().includes("sesion");
+
+    if (sesionActivaDetectada) {
+      console.log(`[SII PW] Sesión anterior activa para RUT ${rutDigitos} — cerrando...`);
+      const clicked = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll("input[type=submit], button, a"));
+        const btn = all.find(el => {
+          const t = ((el.textContent ?? "") + " " + ((el as HTMLInputElement).value ?? "")).toLowerCase();
+          return t.includes("aceptar") || t.includes("continuar") || t.includes("cerrar") || t.includes("nueva") || t.includes("ingresar");
+        });
+        if (btn) { (btn as HTMLElement).click(); return true; }
+        return false;
+      });
+      if (clicked) {
+        await page.waitForNavigation({ timeout: 10000, waitUntil: "domcontentloaded" }).catch(() => {});
+        await page.waitForTimeout(2000);
+      }
+    }
+
+    const cookies = await page.context().cookies();
+    const hasAuth = cookies.some(c => c.name === "TOKEN" || c.name === "CSESSIONID" || c.name.startsWith("NETSCAPE_LIVEWIRE"));
+
+    if (!hasAuth) {
+      const finalText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+      console.error(`[SII PW] Login fallido para RUT ${rutDigitos}: ${finalText.substring(0, 200)}`);
+      await context.close();
+      return null;
+    }
+
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+    console.log(`[SII PW] Login OK RUT ${rutDigitos}`);
+    await context.close();
+    return cookieStr;
+  } catch (e: any) {
+    console.error(`[SII PW] Error login RUT ${rutDigitos}: ${e.message.substring(0, 150)}`);
+    return null;
+  } finally {
+    await browser.close();
   }
 }
 
@@ -289,14 +396,7 @@ export async function extraerRCV(
     const compras = comprasListas.flat();
     const ventas = ventasListas.flat();
 
-
-    // Cerrar sesión explícitamente para liberar sesiones en el SII
-    await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
-      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
-    }).catch(() => {});
-    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
-      headers: { "Cookie": cookies, "Referer": "https://zeusr.sii.cl/", "User-Agent": "Mozilla/5.0" },
-    }).catch(() => {});
+    await logoutSII(cookies);
 
     return { ok: true, ventas, compras };
   } catch (e: any) {
@@ -350,12 +450,7 @@ export async function extraerHonorarios(siiRut: string, siiClaveEnc: string, ani
       honorarios.push(...parsearHonorariosHTML(html, anio, mes));
     }
 
-    await siFetch("https://homer.sii.cl/cgi_AUT2000/autCTermino.cgi", {
-      headers: { "Cookie": cookies, "Referer": "https://homer.sii.cl/", "User-Agent": "Mozilla/5.0" },
-    }).catch(() => {});
-    await fetch("https://zeusr.sii.cl/cgi_AUT2000/CAutTermino.cgi", {
-      headers: { "Cookie": cookies, "Referer": "https://zeusr.sii.cl/", "User-Agent": "Mozilla/5.0" },
-    }).catch(() => {});
+    await logoutSII(cookies);
 
     return { ok: true, honorarios };
   } catch (e: any) {
