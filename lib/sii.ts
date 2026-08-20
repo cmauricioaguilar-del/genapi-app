@@ -1,4 +1,3 @@
-import { chromium } from "playwright";
 import { decrypt } from "./encryption";
 
 export interface DocumentoSII {
@@ -122,6 +121,7 @@ async function logoutSII(cookies: string): Promise<void> {
 
 async function loginSIIConPlaywright(rutDigitos: string, dv: string, clave: string): Promise<string | null> {
   const rutConPuntos = formatearRutConPuntos(rutDigitos) + "-" + dv;
+  const { chromium } = await import("playwright");
 
   const browser = await chromium.launch({
     headless: true,
@@ -485,7 +485,7 @@ function parsearHonorariosHTML(html: string, anio: string, mes: string): Honorar
   if (cant === 0) return docs;
 
   const getVal = (key: string): string => {
-    const m = html.match(new RegExp(`arr_informe_mensual\\['${key}'\\]\\s*=\\s*(?:formatMiles\\("([^"]+)"[^)]*\\)|"([^"]*)")`));
+    const m = html.match(new RegExp(`arr_informe_mensual\\['${key}'\\]\\s*=\\s*(?:formatMiles\\("([^"]+)"[^)]*\\)|"([^"]*)")`))
     return m ? (m[1] ?? m[2] ?? "") : "";
   };
 
